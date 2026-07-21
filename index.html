@@ -1046,23 +1046,29 @@ var IDB = {
   async init(){
     if(this.ready) return this.db;
     if(this.initPromise) return this.initPromise;
-    this.initPromise = new Promise((resolve, reject) => {
-      var req = indexedDB.open('HaydenCelineDB', 2);
-      req.onupgradeneeded = function(e){
-        var db = e.target.result;
-        if(!db.objectStoreNames.contains('cache')){
-          db.createObjectStore('cache', { keyPath: 'key' });
-        }
-        if(!db.objectStoreNames.contains('syncQueue')){
-          var q = db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
-          q.createIndex('byType', 'type', { unique: false });
-        }
-        if(!db.objectStoreNames.contains('pendingWrites')){
-          db.createObjectStore('pendingWrites', { keyPath: 'key' });
-        }
-      };
-      req.onsuccess = (e) => { this.db = e.target.result; this.ready = true; resolve(this.db); };
-      req.onerror = (e) => reject(e);
+    this.initPromise = new Promise((resolve) => {
+      try{
+        var req = indexedDB.open('HaydenCelineDB', 2);
+        req.onupgradeneeded = function(e){
+          var db = e.target.result;
+          if(!db.objectStoreNames.contains('cache')){
+            db.createObjectStore('cache', { keyPath: 'key' });
+          }
+          if(!db.objectStoreNames.contains('syncQueue')){
+            var q = db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
+            q.createIndex('byType', 'type', { unique: false });
+          }
+          if(!db.objectStoreNames.contains('pendingWrites')){
+            db.createObjectStore('pendingWrites', { keyPath: 'key' });
+          }
+        };
+        req.onsuccess = (e) => { this.db = e.target.result; this.ready = true; resolve(this.db); };
+        req.onerror = (e) => { console.warn('[IDB] 初始化失敗:', e); resolve(null); };
+        req.onblocked = (e) => { console.warn('[IDB] 被阻塞:', e); resolve(null); };
+      }catch(err){
+        console.warn('[IDB] 不支援 IndexedDB:', err);
+        resolve(null);
+      }
     });
     return this.initPromise;
   },
@@ -2094,52 +2100,71 @@ async function init(){
   window.__APP_INITIALIZED__ = true;
   buildSkyline();
 
-  // 1. 初始化 IndexedDB（很快）
-  await IDB.init();
+  try{
+    console.log('[Init] 開始初始化...');
 
-  // 2. 立即顯示畫面（0ms延遲）
-  setBodyScene('scene-player');
-  showPage('page-player');
-  hideLoading();
+    // 1. 初始化 IndexedDB（很快）
+    await IDB.init();
+    console.log('[Init] IndexedDB 就緒');
 
-  // 3. 嘗試從快取顯示玩家預覽
-  var cachedHayden = await IDB.get('summary_hayden', 86400000*7);
-  var cachedCeline = await IDB.get('summary_celine', 86400000*7);
-  if(cachedHayden || cachedCeline){
-    updatePlayerPreviews(cachedHayden || {wordKnown:0}, cachedCeline || {wordKnown:0});
-  } else {
-    document.getElementById('hayden-preview').textContent = '準備中...';
-    document.getElementById('celine-preview').textContent = '準備中...';
+    // 2. 立即顯示畫面（0ms延遲）
+    setBodyScene('scene-player');
+    showPage('page-player');
+    hideLoading();
+    console.log('[Init] 畫面已顯示');
+
+    // 3. 嘗試從快取顯示玩家預覽
+    var cachedHayden = await IDB.get('summary_hayden', 86400000*7);
+    var cachedCeline = await IDB.get('summary_celine', 86400000*7);
+    if(cachedHayden || cachedCeline){
+      updatePlayerPreviews(cachedHayden || {wordKnown:0}, cachedCeline || {wordKnown:0});
+      console.log('[Init] 已從快取顯示預覽');
+    } else {
+      document.getElementById('hayden-preview').textContent = '準備中...';
+      document.getElementById('celine-preview').textContent = '準備中...';
+    }
+
+    // 4. 背景並行載入核心數據（不阻塞畫面）
+    Promise.all([
+      loadParentPin(),
+      getPlayerSummary('hayden'),
+      getPlayerSummary('celine')
+    ]).then(function([pin, hSum, cSum]){
+      PARENT_PIN = pin;
+      updatePlayerPreviews(hSum, cSum);
+      IDB.set('summary_hayden', hSum);
+      IDB.set('summary_celine', cSum);
+      console.log('[Init] 背景數據載入完成');
+    }).catch(function(e){
+      console.warn('Background init load failed:', e.message);
+    });
+
+    // 5. 背景載入字庫
+    Promise.all([
+      loadWordLibrary(),
+      loadPhraseLibrary(),
+      loadSentenceLibrary()
+    ]).then(function(){
+      console.log('[Init] 字庫背景載入完成');
+    }).catch(function(e){
+      console.warn('Background library load failed:', e.message);
+    });
+
+    // 6. 嘗試同步任何待上傳的記錄
+    SyncEngine.syncAll();
+
+  }catch(e){
+    console.error('[Init] 初始化出錯:', e);
+    // 即使出錯也要顯示畫面，讓用戶能操作
+    setBodyScene('scene-player');
+    showPage('page-player');
+    document.getElementById('hayden-preview').textContent = '開始第一次冒險！';
+    document.getElementById('celine-preview').textContent = '開始第一次冒險！';
+  }finally{
+    hideLoading();
+    isInitRunning = false;
+    console.log('[Init] 初始化結束');
   }
-
-  // 4. 背景並行載入核心數據（不阻塞畫面）
-  Promise.all([
-    loadParentPin(),
-    getPlayerSummary('hayden'),
-    getPlayerSummary('celine')
-  ]).then(function([pin, hSum, cSum]){
-    PARENT_PIN = pin;
-    updatePlayerPreviews(hSum, cSum);
-    // 更新快取
-    IDB.set('summary_hayden', hSum);
-    IDB.set('summary_celine', cSum);
-  }).catch(function(e){
-    console.warn('Background init load failed:', e.message);
-  });
-
-  // 5. 背景載入字庫（用戶已經可以點選角色了）
-  Promise.all([
-    loadWordLibrary(),
-    loadPhraseLibrary(),
-    loadSentenceLibrary()
-  ]).then(function(){
-    console.log('📚 字庫背景載入完成');
-  }).catch(function(e){
-    console.warn('Background library load failed:', e.message);
-  });
-
-  // 6. 嘗試同步任何待上傳的記錄
-  SyncEngine.syncAll();
 }
 
 function updatePlayerPreviews(hSum,cSum){
