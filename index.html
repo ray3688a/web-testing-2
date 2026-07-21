@@ -1017,6 +1017,13 @@ var firebaseConfig = {
   messagingSenderId:"237822090954",
   appId:"1:237822090954:web:02ff2b231f40a49e735e33"
 };
+
+// 🚀 Service Worker 註冊（讓 iPad 秒開 + 離線可用）
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js')
+    .then(reg => console.log('[SW] 註冊成功:', reg.scope))
+    .catch(err => console.warn('[SW] 註冊失敗:', err));
+}
 var app = initializeApp(firebaseConfig);
 var db  = initializeFirestore(app, { localCache: memoryLocalCache() });
 
@@ -1028,20 +1035,211 @@ function withTimeout(promise,ms,label){
   });
 }
 
-var loadingTimer=null,loadingTimer2=null,isInitRunning=false;
-function startLoadingTimer(){
-  clearTimeout(loadingTimer);clearTimeout(loadingTimer2);
-  loadingTimer=setTimeout(function(){var el=document.getElementById('loading-timeout-msg');if(el)el.style.display='block';},15000);
-  loadingTimer2=setTimeout(function(){var el=document.getElementById('loading-retry-btn');if(el)el.style.display='inline-block';},25000);
-}
-function clearLoadingTimers(){clearTimeout(loadingTimer);clearTimeout(loadingTimer2);}
-function resetLoadingUI(){
-  var m=document.getElementById('loading-timeout-msg'),b=document.getElementById('loading-retry-btn');
-  if(m)m.style.display='none';if(b)b.style.display='none';
-}
-window.retryInit=function(){if(isInitRunning)return;resetLoadingUI();showLoading('重新連接中...','正在重試...');init();};
+/* ============================================================
+   🚀 OPTIMIZATION 1 & 2: IndexedDB Offline Cache + Sync Queue
+   ============================================================ */
+var IDB = {
+  db: null,
+  ready: false,
+  initPromise: null,
 
-// ====== STATE ======
+  async init(){
+    if(this.ready) return this.db;
+    if(this.initPromise) return this.initPromise;
+    this.initPromise = new Promise((resolve, reject) => {
+      var req = indexedDB.open('HaydenCelineDB', 2);
+      req.onupgradeneeded = function(e){
+        var db = e.target.result;
+        if(!db.objectStoreNames.contains('cache')){
+          db.createObjectStore('cache', { keyPath: 'key' });
+        }
+        if(!db.objectStoreNames.contains('syncQueue')){
+          var q = db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
+          q.createIndex('byType', 'type', { unique: false });
+        }
+        if(!db.objectStoreNames.contains('pendingWrites')){
+          db.createObjectStore('pendingWrites', { keyPath: 'key' });
+        }
+      };
+      req.onsuccess = (e) => { this.db = e.target.result; this.ready = true; resolve(this.db); };
+      req.onerror = (e) => reject(e);
+    });
+    return this.initPromise;
+  },
+
+  async get(key, maxAgeMs){
+    maxAgeMs = maxAgeMs || 86400000; // 預設24小時
+    await this.init();
+    return new Promise((resolve) => {
+      var tx = this.db.transaction('cache', 'readonly');
+      var store = tx.objectStore('cache');
+      var req = store.get(key);
+      req.onsuccess = function(){
+        if(req.result && (Date.now() - req.result.timestamp) < maxAgeMs){
+          resolve(req.result.data);
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  },
+
+  async set(key, data){
+    await this.init();
+    return new Promise((resolve, reject) => {
+      var tx = this.db.transaction('cache', 'readwrite');
+      tx.objectStore('cache').put({ key: key, data: data, timestamp: Date.now() });
+      tx.oncomplete = resolve;
+      tx.onerror = reject;
+    });
+  },
+
+  async addToSyncQueue(record){
+    await this.init();
+    return new Promise((resolve, reject) => {
+      var tx = this.db.transaction('syncQueue', 'readwrite');
+      tx.objectStore('syncQueue').add(record);
+      tx.oncomplete = resolve;
+      tx.onerror = reject;
+    });
+  },
+
+  async getSyncQueue(){
+    await this.init();
+    return new Promise((resolve) => {
+      var tx = this.db.transaction('syncQueue', 'readonly');
+      var store = tx.objectStore('syncQueue');
+      var req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  },
+
+  async removeFromSyncQueue(id){
+    await this.init();
+    return new Promise((resolve, reject) => {
+      var tx = this.db.transaction('syncQueue', 'readwrite');
+      tx.objectStore('syncQueue').delete(id);
+      tx.oncomplete = resolve;
+      tx.onerror = reject;
+    });
+  },
+
+  async addPendingWrite(key, data){
+    await this.init();
+    return new Promise((resolve, reject) => {
+      var tx = this.db.transaction('pendingWrites', 'readwrite');
+      tx.objectStore('pendingWrites').put({ key: key, data: data, timestamp: Date.now() });
+      tx.oncomplete = resolve;
+      tx.onerror = reject;
+    });
+  },
+
+  async getPendingWrite(key){
+    await this.init();
+    return new Promise((resolve) => {
+      var tx = this.db.transaction('pendingWrites', 'readonly');
+      var req = tx.objectStore('pendingWrites').get(key);
+      req.onsuccess = () => resolve(req.result ? req.result.data : null);
+      req.onerror = () => resolve(null);
+    });
+  },
+
+  async removePendingWrite(key){
+    await this.init();
+    return new Promise((resolve) => {
+      var tx = this.db.transaction('pendingWrites', 'readwrite');
+      tx.objectStore('pendingWrites').delete(key);
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  }
+};
+
+/* ============================================================
+   🔄 Background Sync Engine
+   ============================================================ */
+var SyncEngine = {
+  isSyncing: false,
+
+  async syncAll(){
+    if(this.isSyncing) return;
+    if(!navigator.onLine) return;
+    this.isSyncing = true;
+    try{
+      await this._syncQueue();
+      await this._syncPendingWrites();
+    }catch(e){ console.warn('Sync error:', e); }
+    finally{ this.isSyncing = false; }
+  },
+
+  async _syncQueue(){
+    var queue = await IDB.getSyncQueue();
+    for(var i=0;i<queue.length;i++){
+      var rec = queue[i];
+      try{
+        if(rec.type === 'session'){
+          await addDoc(collection(db, 'players', rec.player, 'sessions'), {
+            date: serverTimestamp(),
+            played: rec.played, known: rec.known, unknown: rec.unknown,
+            percentage: rec.percentage, durationMs: rec.durationMs,
+            gameType: rec.gameType
+          });
+        }else if(rec.type === 'mathSession'){
+          await addDoc(collection(db, 'players', rec.player, 'sessions'), {
+            date: serverTimestamp(), played: rec.total, known: rec.firstCorrect+rec.secondCorrect,
+            unknown: rec.wrong, percentage: rec.pct, durationMs: rec.durationMs,
+            gameType: 'math', firstCorrect: rec.firstCorrect, secondCorrect: rec.secondCorrect
+          });
+        }else if(rec.type === 'wordResult'){
+          await setDoc(doc(db, 'players', rec.player, 'wordStats', rec.word), rec.data);
+        }else if(rec.type === 'phraseResult'){
+          await setDoc(doc(db, 'players', rec.player, 'phraseStats', rec.word), rec.data);
+        }else if(rec.type === 'sentenceResult'){
+          await setDoc(doc(db, 'players', rec.player, 'sentenceStats', rec.id), rec.data);
+        }else if(rec.type === 'mathChapterStat'){
+          await setDoc(doc(db, 'players', rec.player, 'mathChapterStats', rec.chapter), rec.data);
+        }else if(rec.type === 'mathWrongHistory'){
+          await addDoc(collection(db, 'players', rec.player, 'mathWrongHistory'), rec.data);
+        }else if(rec.type === 'mathWeakHistory'){
+          await addDoc(collection(db, 'players', rec.player, 'mathWeakHistory'), rec.data);
+        }else if(rec.type === 'mathWrongPool'){
+          var poolRef = collection(db, 'players', rec.player, 'mathWrongPool');
+          if(rec.existingDocId){
+            await setDoc(doc(db, 'players', rec.player, 'mathWrongPool', rec.existingDocId), rec.data, {merge:true});
+          }else{
+            var newRef = await addDoc(poolRef, rec.data);
+            // 更新本地記錄的 docId
+            rec.data.docId = newRef.id;
+            await IDB.addPendingWrite('mathWrongPool_'+rec.player+'_'+rec.question, rec.data);
+          }
+        }else if(rec.type === 'mathWrongPoolUpdate'){
+          await setDoc(doc(db, 'players', rec.player, 'mathWrongPool', rec.docId), rec.data, {merge:true});
+        }else if(rec.type === 'taskDone'){
+          await setDoc(doc(db, 'tasks', rec.player, 'daily', rec.dateKey), rec.data, {merge:true});
+        }
+        await IDB.removeFromSyncQueue(rec.id);
+      }catch(e){
+        console.warn('Sync record failed:', rec.id, e.message);
+        break; // 這筆失敗就停止，下次再試
+      }
+    }
+  },
+
+  async _syncPendingWrites(){
+    // 處理 pendingWrites 中的數據（如字庫變更等）
+    // 目前主要用於 mathWrongPool 的 docId 更新
+  }
+};
+
+// 網路狀態監聽
+window.addEventListener('online', () => { console.log('🌐 網路恢復，開始同步...'); SyncEngine.syncAll(); });
+window.addEventListener('offline', () => { console.log('📴 網路斷線，進入離線模式'); });
+
+/* ============================================================
+   原有 STATE 與常數
+   ============================================================ */
 var currentPlayer='',currentGameType='chinese';
 var allWords=[],fullWordLibrary=[],fullPhraseLibrary=[],fullSentenceLibrary=[];
 var wordStatsMap={},phraseStatsMap={},sentenceStatsMap={};
@@ -1069,7 +1267,6 @@ var GAME_CATALOG=[
   {id:'english', name:'英文冒險',icon:'🔠', desc:'即將推出！',              available:false}
 ];
 
-// Math chapters
 var MATH_CHAPTERS=[
   {id:'1-3',name:'0-10 加法',   stage:1,stageClass:'s1',example:'3 + 4 = ?'},
   {id:'1-4',name:'0-10 減法',   stage:1,stageClass:'s1',example:'8 - 3 = ?'},
@@ -1137,8 +1334,13 @@ function showPage(id){document.querySelectorAll('.page').forEach(function(p){p.c
 function pickRandom(arr){return arr[Math.floor(Math.random()*arr.length)];}
 function shuffle(arr){var a=arr.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}return a;}
 function randInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
-function parseInput(text){var parts=text.split(/[\s,，、;；\n\r]+/),seen={},result=[];parts.forEach(function(t){t=t.trim();if(t.length>0&&!seen[t]){seen[t]=true;result.push(t);}});return result;}
-function parseSentenceInput(text){var lines=text.split(/\n|\r\n|\r/),seen={},result=[];lines.forEach(function(line){line=line.trim();if(line.length>0&&!seen[line]){seen[line]=true;result.push(line);}});return result;}
+function parseInput(text){var parts=text.split(/[\s,，、;；
+
+]+/),seen={},result=[];parts.forEach(function(t){t=t.trim();if(t.length>0&&!seen[t]){seen[t]=true;result.push(t);}});return result;}
+function parseSentenceInput(text){var lines=text.split(/
+|
+|
+/),seen={},result=[];lines.forEach(function(line){line=line.trim();if(line.length>0&&!seen[line]){seen[line]=true;result.push(line);}});return result;}
 function todayKey(){var d=new Date();return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();}
 function todayDayKey(){return DAY_KEYS[new Date().getDay()];}
 function showLoading(text,sub){document.getElementById('loading-text').textContent=text||'載入中...';document.getElementById('loading-sub').textContent=sub||'';resetLoadingUI();document.getElementById('loading-overlay').style.display='flex';}
@@ -1148,6 +1350,19 @@ function setDialogue(text){var b=document.getElementById('dialogue-bubble');if(!
 function setMathBubble(text){var b=document.getElementById('math-bubble');if(!b)return;b.textContent=text;}
 function addCollectible(){collectedItems.push(pickRandom(scenes[currentSceneIndex].items));updateCollectiblesDisplay();}
 function updateCollectiblesDisplay(){var bar=document.getElementById('collectibles-bar'),start=Math.max(0,collectedItems.length-15),html='';collectedItems.slice(start).forEach(function(item,i,arr){html+='<span class="collectible-item"'+(i===arr.length-1?' style="animation:collectPop 0.5s ease;"':'')+'>'+item+'</span>';});bar.innerHTML=html;}
+
+var loadingTimer=null,loadingTimer2=null,isInitRunning=false;
+function startLoadingTimer(){
+  clearTimeout(loadingTimer);clearTimeout(loadingTimer2);
+  loadingTimer=setTimeout(function(){var el=document.getElementById('loading-timeout-msg');if(el)el.style.display='block';},15000);
+  loadingTimer2=setTimeout(function(){var el=document.getElementById('loading-retry-btn');if(el)el.style.display='inline-block';},25000);
+}
+function clearLoadingTimers(){clearTimeout(loadingTimer);clearTimeout(loadingTimer2);}
+function resetLoadingUI(){
+  var m=document.getElementById('loading-timeout-msg'),b=document.getElementById('loading-retry-btn');
+  if(m)m.style.display='none';if(b)b.style.display='none';
+}
+window.retryInit=function(){if(isInitRunning)return;resetLoadingUI();showLoading('重新連接中...','正在重試...');init();};
 
 // Speech
 function getChineseVoice(){if(!window.speechSynthesis)return null;var voices=window.speechSynthesis.getVoices();for(var i=0;i<voices.length;i++){if(voices[i].lang==='zh-HK')return voices[i];}for(var j=0;j<voices.length;j++){if(voices[j].lang==='zh-TW')return voices[j];}for(var k=0;k<voices.length;k++){if(voices[k].lang.indexOf('zh')!==-1)return voices[k];}return null;}
@@ -1183,155 +1398,628 @@ function playRetrySound()       { playSound([400,350],0.1,0.25); }
 // Skyline
 function buildSkyline(){var w=[30,18,40,15,35,20,45,22,28,50,16,38,25,42,20,30,18,35,15,40,25],h=[60,90,45,70,80,55,100,65,50,110,40,75,85,95,60,70,55,80,45,90,65],html='<div class="skyline-buildings">';for(var i=0;i<w.length;i++)html+='<div class="building" style="width:'+w[i]+'px;height:'+h[i]+'px;"></div>';document.getElementById('skyline').innerHTML=html+'</div>';}
 
-// ====== FIREBASE: PIN ======
-async function loadParentPin(){try{updateLoadingSub('讀取設定...');var snap=await withTimeout(getDoc(doc(db,'settings','parentPin')),10000,'pin');if(snap.exists())return snap.data().pin;await setDoc(doc(db,'settings','parentPin'),{pin:'1234',createdAt:serverTimestamp()});return'1234';}catch(e){console.warn(e.message);return'1234';}}
+/* ============================================================
+   🚀 OPTIMIZED FIREBASE FUNCTIONS (with IndexedDB caching)
+   ============================================================ */
 
-// ====== FIREBASE: 字庫 ======
-async function loadWordLibrary(){try{updateLoadingSub('讀取單字庫...');var snap=await withTimeout(getDocs(collection(db,'wordLibrary')),10000,'wLib');fullWordLibrary=[];snap.forEach(function(d){fullWordLibrary.push(Object.assign({id:d.id},d.data()));});return fullWordLibrary;}catch(e){console.warn(e.message);return fullWordLibrary;}}
-async function addWordToLibrary(word,cat){if(fullWordLibrary.find(function(w){return w.word===word;}))return false;await addDoc(collection(db,'wordLibrary'),{word:word,category:cat||'一般',addedDate:serverTimestamp()});return true;}
-async function deleteWordFromLibrary(docId){await deleteDoc(doc(db,'wordLibrary',docId));}
-async function loadPhraseLibrary(){try{updateLoadingSub('讀取詞語庫...');var snap=await withTimeout(getDocs(collection(db,'phraseLibrary')),10000,'pLib');fullPhraseLibrary=[];snap.forEach(function(d){fullPhraseLibrary.push(Object.assign({id:d.id},d.data()));});return fullPhraseLibrary;}catch(e){console.warn(e.message);return fullPhraseLibrary;}}
-async function addPhraseToLibrary(phrase,cat){if(fullPhraseLibrary.find(function(p){return p.word===phrase;}))return false;await addDoc(collection(db,'phraseLibrary'),{word:phrase,category:cat||'一般',addedDate:serverTimestamp()});return true;}
-async function deletePhraseFromLibrary(docId){await deleteDoc(doc(db,'phraseLibrary',docId));}
-async function loadSentenceLibrary(){try{updateLoadingSub('讀取句子庫...');var snap=await withTimeout(getDocs(collection(db,'sentenceLibrary')),10000,'sLib');fullSentenceLibrary=[];snap.forEach(function(d){fullSentenceLibrary.push(Object.assign({id:d.id},d.data()));});fullSentenceLibrary.sort(function(a,b){return(a.order||0)-(b.order||0);});return fullSentenceLibrary;}catch(e){console.warn(e.message);return fullSentenceLibrary;}}
-async function addSentenceToLibrary(sentence){if(fullSentenceLibrary.find(function(s){return s.sentence===sentence;}))return false;await addDoc(collection(db,'sentenceLibrary'),{sentence:sentence,order:fullSentenceLibrary.length,addedDate:serverTimestamp()});return true;}
-async function deleteSentenceFromLibrary(docId){await deleteDoc(doc(db,'sentenceLibrary',docId));}
+// PIN: 快取1小時
+async function loadParentPin(){
+  try{
+    updateLoadingSub('讀取設定...');
+    var cached = await IDB.get('parentPin', 3600000);
+    if(cached) return cached;
+    var snap = await withTimeout(getDoc(doc(db,'settings','parentPin')),10000,'pin');
+    var pin = snap.exists() ? snap.data().pin : '1234';
+    if(!snap.exists()) await setDoc(doc(db,'settings','parentPin'),{pin:'1234',createdAt:serverTimestamp()});
+    await IDB.set('parentPin', pin);
+    return pin;
+  }catch(e){
+    console.warn('loadParentPin error:', e.message);
+    var fallback = await IDB.get('parentPin', 86400000*7); // 7天舊數據也接受
+    return fallback || '1234';
+  }
+}
 
-// ====== FIREBASE: 字詞句統計 ======
-async function loadPlayerStats(player){try{updateLoadingSub('讀取進度（'+charNames[player]+'）...');var snap=await withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'wS');wordStatsMap={};snap.forEach(function(d){wordStatsMap[d.data().word]=d.data();});return wordStatsMap;}catch(e){console.warn(e.message);return wordStatsMap;}}
-async function loadPhraseStats(player){try{updateLoadingSub('讀取詞語進度...');var snap=await withTimeout(getDocs(collection(db,'players',player,'phraseStats')),10000,'pS');phraseStatsMap={};snap.forEach(function(d){phraseStatsMap[d.data().word]=d.data();});return phraseStatsMap;}catch(e){console.warn(e.message);return phraseStatsMap;}}
-async function loadSentenceStats(player){try{updateLoadingSub('讀取句子進度...');var snap=await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'sS');sentenceStatsMap={};snap.forEach(function(d){sentenceStatsMap[d.id]=d.data();});return sentenceStatsMap;}catch(e){console.warn(e.message);return sentenceStatsMap;}}
-async function saveWordResult(player,word,success){try{var ex=wordStatsMap[word],updated={word:word,shown:(ex?ex.shown:0)+1,success:(ex?ex.success:0)+(success?1:0),fail:(ex?ex.fail:0)+(success?0:1),lastSeen:serverTimestamp()};await setDoc(doc(db,'players',player,'wordStats',word),updated);wordStatsMap[word]=updated;}catch(e){console.warn(e.message);}}
-async function savePhraseResult(player,phrase,success){try{var ex=phraseStatsMap[phrase],updated={word:phrase,shown:(ex?ex.shown:0)+1,success:(ex?ex.success:0)+(success?1:0),fail:(ex?ex.fail:0)+(success?0:1),lastSeen:serverTimestamp()};await setDoc(doc(db,'players',player,'phraseStats',phrase),updated);phraseStatsMap[phrase]=updated;}catch(e){console.warn(e.message);}}
-async function saveSentenceResult(player,sentId,sentText,success){try{var ex=sentenceStatsMap[sentId],updated={sentence:sentText,shown:(ex?ex.shown:0)+1,success:(ex?ex.success:0)+(success?1:0),fail:(ex?ex.fail:0)+(success?0:1),lastSeen:serverTimestamp()};await setDoc(doc(db,'players',player,'sentenceStats',sentId),updated);sentenceStatsMap[sentId]=updated;}catch(e){console.warn(e.message);}}
+// 字庫: 快取24小時，先返回快取再背景更新
+async function loadWordLibrary(){
+  try{
+    updateLoadingSub('讀取單字庫...');
+    var cached = await IDB.get('wordLibrary', 86400000);
+    if(cached){
+      fullWordLibrary = cached;
+      // 背景更新
+      _backgroundRefreshWordLibrary();
+      return cached;
+    }
+    return await _fetchWordLibraryFromFirebase();
+  }catch(e){
+    console.warn('loadWordLibrary error:', e.message);
+    var fallback = await IDB.get('wordLibrary', 86400000*7);
+    if(fallback){ fullWordLibrary = fallback; return fallback; }
+    return fullWordLibrary;
+  }
+}
+async function _fetchWordLibraryFromFirebase(){
+  var snap = await withTimeout(getDocs(collection(db,'wordLibrary')),10000,'wLib');
+  fullWordLibrary = [];
+  snap.forEach(function(d){ fullWordLibrary.push(Object.assign({id:d.id},d.data())); });
+  await IDB.set('wordLibrary', fullWordLibrary);
+  return fullWordLibrary;
+}
+async function _backgroundRefreshWordLibrary(){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'wordLibrary')),15000,'wLibBg');
+    var fresh = [];
+    snap.forEach(function(d){ fresh.push(Object.assign({id:d.id},d.data())); });
+    fullWordLibrary = fresh;
+    await IDB.set('wordLibrary', fresh);
+  }catch(e){ console.warn('Background wordLib refresh failed:', e.message); }
+}
 
-// ====== FIREBASE: 數學設定 ======
+async function addWordToLibrary(word,cat){
+  if(fullWordLibrary.find(function(w){return w.word===word;})) return false;
+  await addDoc(collection(db,'wordLibrary'),{word:word,category:cat||'一般',addedDate:serverTimestamp()});
+  // 刷新本地快取
+  fullWordLibrary.push({word:word,category:cat||'一般'});
+  await IDB.set('wordLibrary', fullWordLibrary);
+  return true;
+}
+async function deleteWordFromLibrary(docId){
+  await deleteDoc(doc(db,'wordLibrary',docId));
+  fullWordLibrary = fullWordLibrary.filter(function(w){return w.id!==docId;});
+  await IDB.set('wordLibrary', fullWordLibrary);
+}
+
+async function loadPhraseLibrary(){
+  try{
+    updateLoadingSub('讀取詞語庫...');
+    var cached = await IDB.get('phraseLibrary', 86400000);
+    if(cached){ fullPhraseLibrary = cached; _backgroundRefreshPhraseLibrary(); return cached; }
+    return await _fetchPhraseLibraryFromFirebase();
+  }catch(e){
+    console.warn('loadPhraseLibrary error:', e.message);
+    var fallback = await IDB.get('phraseLibrary', 86400000*7);
+    if(fallback){ fullPhraseLibrary = fallback; return fallback; }
+    return fullPhraseLibrary;
+  }
+}
+async function _fetchPhraseLibraryFromFirebase(){
+  var snap = await withTimeout(getDocs(collection(db,'phraseLibrary')),10000,'pLib');
+  fullPhraseLibrary = [];
+  snap.forEach(function(d){ fullPhraseLibrary.push(Object.assign({id:d.id},d.data())); });
+  await IDB.set('phraseLibrary', fullPhraseLibrary);
+  return fullPhraseLibrary;
+}
+async function _backgroundRefreshPhraseLibrary(){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'phraseLibrary')),15000,'pLibBg');
+    var fresh = [];
+    snap.forEach(function(d){ fresh.push(Object.assign({id:d.id},d.data())); });
+    fullPhraseLibrary = fresh;
+    await IDB.set('phraseLibrary', fresh);
+  }catch(e){}
+}
+
+async function addPhraseToLibrary(phrase,cat){
+  if(fullPhraseLibrary.find(function(p){return p.word===phrase;})) return false;
+  await addDoc(collection(db,'phraseLibrary'),{word:phrase,category:cat||'一般',addedDate:serverTimestamp()});
+  fullPhraseLibrary.push({word:phrase,category:cat||'一般'});
+  await IDB.set('phraseLibrary', fullPhraseLibrary);
+  return true;
+}
+async function deletePhraseFromLibrary(docId){
+  await deleteDoc(doc(db,'phraseLibrary',docId));
+  fullPhraseLibrary = fullPhraseLibrary.filter(function(p){return p.id!==docId;});
+  await IDB.set('phraseLibrary', fullPhraseLibrary);
+}
+
+async function loadSentenceLibrary(){
+  try{
+    updateLoadingSub('讀取句子庫...');
+    var cached = await IDB.get('sentenceLibrary', 86400000);
+    if(cached){ fullSentenceLibrary = cached; _backgroundRefreshSentenceLibrary(); return cached; }
+    return await _fetchSentenceLibraryFromFirebase();
+  }catch(e){
+    console.warn('loadSentenceLibrary error:', e.message);
+    var fallback = await IDB.get('sentenceLibrary', 86400000*7);
+    if(fallback){ fullSentenceLibrary = fallback; return fallback; }
+    return fullSentenceLibrary;
+  }
+}
+async function _fetchSentenceLibraryFromFirebase(){
+  var snap = await withTimeout(getDocs(collection(db,'sentenceLibrary')),10000,'sLib');
+  fullSentenceLibrary = [];
+  snap.forEach(function(d){ fullSentenceLibrary.push(Object.assign({id:d.id},d.data())); });
+  fullSentenceLibrary.sort(function(a,b){return(a.order||0)-(b.order||0);});
+  await IDB.set('sentenceLibrary', fullSentenceLibrary);
+  return fullSentenceLibrary;
+}
+async function _backgroundRefreshSentenceLibrary(){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'sentenceLibrary')),15000,'sLibBg');
+    var fresh = [];
+    snap.forEach(function(d){ fresh.push(Object.assign({id:d.id},d.data())); });
+    fresh.sort(function(a,b){return(a.order||0)-(b.order||0);});
+    fullSentenceLibrary = fresh;
+    await IDB.set('sentenceLibrary', fresh);
+  }catch(e){}
+}
+
+async function addSentenceToLibrary(sentence){
+  if(fullSentenceLibrary.find(function(s){return s.sentence===sentence;})) return false;
+  await addDoc(collection(db,'sentenceLibrary'),{sentence:sentence,order:fullSentenceLibrary.length,addedDate:serverTimestamp()});
+  fullSentenceLibrary.push({sentence:sentence,order:fullSentenceLibrary.length});
+  await IDB.set('sentenceLibrary', fullSentenceLibrary);
+  return true;
+}
+async function deleteSentenceFromLibrary(docId){
+  await deleteDoc(doc(db,'sentenceLibrary',docId));
+  fullSentenceLibrary = fullSentenceLibrary.filter(function(s){return s.id!==docId;});
+  await IDB.set('sentenceLibrary', fullSentenceLibrary);
+}
+
+// ====== 玩家統計：快取1小時，先讀本地再背景更新 ======
+async function loadPlayerStats(player){
+  try{
+    updateLoadingSub('讀取進度（'+charNames[player]+'）...');
+    var cached = await IDB.get('wordStats_'+player, 3600000);
+    if(cached){ wordStatsMap = cached; _backgroundRefreshPlayerStats(player); return cached; }
+    return await _fetchPlayerStatsFromFirebase(player);
+  }catch(e){
+    console.warn('loadPlayerStats error:', e.message);
+    var fallback = await IDB.get('wordStats_'+player, 86400000*7);
+    if(fallback){ wordStatsMap = fallback; return fallback; }
+    return wordStatsMap;
+  }
+}
+async function _fetchPlayerStatsFromFirebase(player){
+  var snap = await withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'wS');
+  wordStatsMap = {};
+  snap.forEach(function(d){ wordStatsMap[d.data().word] = d.data(); });
+  await IDB.set('wordStats_'+player, wordStatsMap);
+  return wordStatsMap;
+}
+async function _backgroundRefreshPlayerStats(player){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'players',player,'wordStats')),15000,'wSbg');
+    var fresh = {};
+    snap.forEach(function(d){ fresh[d.data().word] = d.data(); });
+    wordStatsMap = fresh;
+    await IDB.set('wordStats_'+player, fresh);
+  }catch(e){}
+}
+
+async function loadPhraseStats(player){
+  try{
+    updateLoadingSub('讀取詞語進度...');
+    var cached = await IDB.get('phraseStats_'+player, 3600000);
+    if(cached){ phraseStatsMap = cached; _backgroundRefreshPhraseStats(player); return cached; }
+    return await _fetchPhraseStatsFromFirebase(player);
+  }catch(e){
+    console.warn('loadPhraseStats error:', e.message);
+    var fallback = await IDB.get('phraseStats_'+player, 86400000*7);
+    if(fallback){ phraseStatsMap = fallback; return fallback; }
+    return phraseStatsMap;
+  }
+}
+async function _fetchPhraseStatsFromFirebase(player){
+  var snap = await withTimeout(getDocs(collection(db,'players',player,'phraseStats')),10000,'pS');
+  phraseStatsMap = {};
+  snap.forEach(function(d){ phraseStatsMap[d.data().word] = d.data(); });
+  await IDB.set('phraseStats_'+player, phraseStatsMap);
+  return phraseStatsMap;
+}
+async function _backgroundRefreshPhraseStats(player){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'players',player,'phraseStats')),15000,'pSbg');
+    var fresh = {};
+    snap.forEach(function(d){ fresh[d.data().word] = d.data(); });
+    phraseStatsMap = fresh;
+    await IDB.set('phraseStats_'+player, fresh);
+  }catch(e){}
+}
+
+async function loadSentenceStats(player){
+  try{
+    updateLoadingSub('讀取句子進度...');
+    var cached = await IDB.get('sentenceStats_'+player, 3600000);
+    if(cached){ sentenceStatsMap = cached; _backgroundRefreshSentenceStats(player); return cached; }
+    return await _fetchSentenceStatsFromFirebase(player);
+  }catch(e){
+    console.warn('loadSentenceStats error:', e.message);
+    var fallback = await IDB.get('sentenceStats_'+player, 86400000*7);
+    if(fallback){ sentenceStatsMap = fallback; return fallback; }
+    return sentenceStatsMap;
+  }
+}
+async function _fetchSentenceStatsFromFirebase(player){
+  var snap = await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'sS');
+  sentenceStatsMap = {};
+  snap.forEach(function(d){ sentenceStatsMap[d.id] = d.data(); });
+  await IDB.set('sentenceStats_'+player, sentenceStatsMap);
+  return sentenceStatsMap;
+}
+async function _backgroundRefreshSentenceStats(player){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),15000,'sSbg');
+    var fresh = {};
+    snap.forEach(function(d){ fresh[d.id] = d.data(); });
+    sentenceStatsMap = fresh;
+    await IDB.set('sentenceStats_'+player, fresh);
+  }catch(e){}
+}
+
+// ====== 結果儲存：先寫本地佇列 + 嘗試即時同步 ======
+async function saveWordResult(player,word,success){
+  try{
+    var ex = wordStatsMap[word];
+    var updated = {word:word, shown:(ex?ex.shown:0)+1, success:(ex?ex.success:0)+(success?1:0), fail:(ex?ex.fail:0)+(success?0:1), lastSeen: new Date().toISOString()};
+    wordStatsMap[word] = updated;
+    await IDB.set('wordStats_'+player, wordStatsMap);
+    // 加入同步佇列
+    await IDB.addToSyncQueue({type:'wordResult', player:player, word:word, data:updated, timestamp:Date.now()});
+    SyncEngine.syncAll(); // 嘗試即時同步
+  }catch(e){ console.warn('saveWordResult error:', e.message); }
+}
+
+async function savePhraseResult(player,phrase,success){
+  try{
+    var ex = phraseStatsMap[phrase];
+    var updated = {word:phrase, shown:(ex?ex.shown:0)+1, success:(ex?ex.success:0)+(success?1:0), fail:(ex?ex.fail:0)+(success?0:1), lastSeen: new Date().toISOString()};
+    phraseStatsMap[phrase] = updated;
+    await IDB.set('phraseStats_'+player, phraseStatsMap);
+    await IDB.addToSyncQueue({type:'phraseResult', player:player, word:phrase, data:updated, timestamp:Date.now()});
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('savePhraseResult error:', e.message); }
+}
+
+async function saveSentenceResult(player,sentId,sentText,success){
+  try{
+    var ex = sentenceStatsMap[sentId];
+    var updated = {sentence:sentText, shown:(ex?ex.shown:0)+1, success:(ex?ex.success:0)+(success?1:0), fail:(ex?ex.fail:0)+(success?0:1), lastSeen: new Date().toISOString()};
+    sentenceStatsMap[sentId] = updated;
+    await IDB.set('sentenceStats_'+player, sentenceStatsMap);
+    await IDB.addToSyncQueue({type:'sentenceResult', player:player, id:sentId, data:updated, timestamp:Date.now()});
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('saveSentenceResult error:', e.message); }
+}
+
+// ====== 數學設定：快取12小時 ======
 async function loadMathSettings(player){
   try{
-    var snap=await withTimeout(getDoc(doc(db,'mathSettings',player)),10000,'mathSet');
-    if(snap.exists()){mathSettings[player]=snap.data().chapters||{};}
-    else{mathSettings[player]={};}
-  }catch(e){console.warn(e.message);mathSettings[player]=mathSettings[player]||{};}
+    var cached = await IDB.get('mathSettings_'+player, 43200000);
+    if(cached){ mathSettings[player] = cached.chapters || {}; _backgroundRefreshMathSettings(player); return; }
+    await _fetchMathSettingsFromFirebase(player);
+  }catch(e){
+    console.warn('loadMathSettings error:', e.message);
+    var fallback = await IDB.get('mathSettings_'+player, 86400000*7);
+    if(fallback){ mathSettings[player] = fallback.chapters || {}; }
+    else{ mathSettings[player] = mathSettings[player] || {}; }
+  }
 }
+async function _fetchMathSettingsFromFirebase(player){
+  var snap = await withTimeout(getDoc(doc(db,'mathSettings',player)),10000,'mathSet');
+  if(snap.exists()){ mathSettings[player] = snap.data().chapters || {}; }
+  else{ mathSettings[player] = {}; }
+  await IDB.set('mathSettings_'+player, {chapters: mathSettings[player]});
+}
+async function _backgroundRefreshMathSettings(player){
+  try{
+    var snap = await withTimeout(getDoc(doc(db,'mathSettings',player)),15000,'mathSetBg');
+    if(snap.exists()){ mathSettings[player] = snap.data().chapters || {}; }
+    await IDB.set('mathSettings_'+player, {chapters: mathSettings[player]});
+  }catch(e){}
+}
+
 async function saveMathSettingsForPlayer(player,settings){
   await setDoc(doc(db,'mathSettings',player),{chapters:settings,updatedAt:serverTimestamp()});
-  mathSettings[player]=settings;
+  mathSettings[player] = settings;
+  await IDB.set('mathSettings_'+player, {chapters: settings});
 }
 
-// ====== FIREBASE: 數學錯題庫（動態）======
+// ====== 數學錯題庫：快取 + 同步佇列 ======
 async function loadMathWrongPool(player){
   try{
-    var snap=await withTimeout(getDocs(collection(db,'players',player,'mathWrongPool')),10000,'mPool');
-    mathWrongPool[player]=[];
-    snap.forEach(function(d){mathWrongPool[player].push(Object.assign({docId:d.id},d.data()));});
-  }catch(e){console.warn(e.message);mathWrongPool[player]=mathWrongPool[player]||[];}
+    var cached = await IDB.get('mathWrongPool_'+player, 3600000);
+    if(cached){ mathWrongPool[player] = cached; _backgroundRefreshMathWrongPool(player); return; }
+    await _fetchMathWrongPoolFromFirebase(player);
+  }catch(e){
+    console.warn('loadMathWrongPool error:', e.message);
+    var fallback = await IDB.get('mathWrongPool_'+player, 86400000*7);
+    if(fallback){ mathWrongPool[player] = fallback; }
+    else{ mathWrongPool[player] = mathWrongPool[player] || []; }
+  }
 }
+async function _fetchMathWrongPoolFromFirebase(player){
+  var snap = await withTimeout(getDocs(collection(db,'players',player,'mathWrongPool')),10000,'mPool');
+  mathWrongPool[player] = [];
+  snap.forEach(function(d){ mathWrongPool[player].push(Object.assign({docId:d.id},d.data())); });
+  await IDB.set('mathWrongPool_'+player, mathWrongPool[player]);
+}
+async function _backgroundRefreshMathWrongPool(player){
+  try{
+    var snap = await withTimeout(getDocs(collection(db,'players',player,'mathWrongPool')),15000,'mPoolBg');
+    var fresh = [];
+    snap.forEach(function(d){ fresh.push(Object.assign({docId:d.id},d.data())); });
+    mathWrongPool[player] = fresh;
+    await IDB.set('mathWrongPool_'+player, fresh);
+  }catch(e){}
+}
+
 async function addToMathWrongPool(player,question,answer,chapter){
   try{
-    var pool=mathWrongPool[player]||[];
-    var existing=pool.find(function(p){return p.question===question;});
+    var pool = mathWrongPool[player] || [];
+    var existing = pool.find(function(p){return p.question===question;});
+    var data = {question:question, answer:answer, chapter:chapter, status:'wrong', consecutiveCorrect:0, updatedAt: new Date().toISOString()};
     if(existing){
-      await setDoc(doc(db,'players',player,'mathWrongPool',existing.docId),{question:question,answer:answer,chapter:chapter,status:'wrong',consecutiveCorrect:0,updatedAt:serverTimestamp()},{merge:true});
-      existing.status='wrong';existing.consecutiveCorrect=0;
+      existing.status = 'wrong'; existing.consecutiveCorrect = 0;
+      await IDB.addToSyncQueue({
+        type:'mathWrongPoolUpdate', player:player, docId:existing.docId,
+        data: {status:'wrong', consecutiveCorrect:0, updatedAt: serverTimestamp()},
+        timestamp: Date.now()
+      });
     }else{
-      var ref=await addDoc(collection(db,'players',player,'mathWrongPool'),{question:question,answer:answer,chapter:chapter,status:'wrong',consecutiveCorrect:0,addedDate:serverTimestamp()});
-      mathWrongPool[player].push({docId:ref.id,question:question,answer:answer,chapter:chapter,status:'wrong',consecutiveCorrect:0});
+      pool.push(Object.assign({docId:null}, data));
+      mathWrongPool[player] = pool;
+      await IDB.set('mathWrongPool_'+player, pool);
+      await IDB.addToSyncQueue({
+        type:'mathWrongPool', player:player, question:question,
+        data: Object.assign({}, data, {addedDate: serverTimestamp()}),
+        timestamp: Date.now()
+      });
     }
-  }catch(e){console.warn(e.message);}
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('addToMathWrongPool error:', e.message); }
 }
+
 async function updateMathWrongPool(player,question,isCorrect){
   try{
-    var pool=mathWrongPool[player]||[];
-    var item=pool.find(function(p){return p.question===question;});
-    if(!item)return;
+    var pool = mathWrongPool[player] || [];
+    var item = pool.find(function(p){return p.question===question;});
+    if(!item) return;
     if(isCorrect){
-      var newConsec=(item.consecutiveCorrect||0)+1;
+      var newConsec = (item.consecutiveCorrect||0)+1;
       if(newConsec>=2){
-        await deleteDoc(doc(db,'players',player,'mathWrongPool',item.docId));
-        mathWrongPool[player]=pool.filter(function(p){return p.question!==question;});
+        await IDB.addToSyncQueue({
+          type:'mathWrongPoolDelete', player:player, docId:item.docId,
+          timestamp: Date.now()
+        });
+        mathWrongPool[player] = pool.filter(function(p){return p.question!==question;});
       }else{
-        await setDoc(doc(db,'players',player,'mathWrongPool',item.docId),{status:'watching',consecutiveCorrect:newConsec,updatedAt:serverTimestamp()},{merge:true});
-        item.status='watching';item.consecutiveCorrect=newConsec;
+        item.status = 'watching'; item.consecutiveCorrect = newConsec;
+        await IDB.addToSyncQueue({
+          type:'mathWrongPoolUpdate', player:player, docId:item.docId,
+          data: {status:'watching', consecutiveCorrect:newConsec, updatedAt: serverTimestamp()},
+          timestamp: Date.now()
+        });
       }
     }else{
-      await setDoc(doc(db,'players',player,'mathWrongPool',item.docId),{status:'wrong',consecutiveCorrect:0,updatedAt:serverTimestamp()},{merge:true});
-      item.status='wrong';item.consecutiveCorrect=0;
+      item.status = 'wrong'; item.consecutiveCorrect = 0;
+      await IDB.addToSyncQueue({
+        type:'mathWrongPoolUpdate', player:player, docId:item.docId,
+        data: {status:'wrong', consecutiveCorrect:0, updatedAt: serverTimestamp()},
+        timestamp: Date.now()
+      });
     }
-  }catch(e){console.warn(e.message);}
+    await IDB.set('mathWrongPool_'+player, mathWrongPool[player]);
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('updateMathWrongPool error:', e.message); }
 }
 
-// ====== FIREBASE: 數學永久記錄 ======
+// ====== 數學歷史記錄：同步佇列 ======
 async function saveMathWrongHistory(player,question,answer,userAnswer,chapter){
   try{
-    var d=new Date();
-    var dateStr=(d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate());
-    await addDoc(collection(db,'players',player,'mathWrongHistory'),{question:question,answer:answer,userAnswer:userAnswer,chapter:chapter,type:'wrong',date:dateStr,timestamp:serverTimestamp()});
-  }catch(e){console.warn(e.message);}
+    var d = new Date();
+    var dateStr = (d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate());
+    var data = {question:question, answer:answer, userAnswer:userAnswer, chapter:chapter, type:'wrong', date:dateStr, timestamp: serverTimestamp()};
+    await IDB.addToSyncQueue({type:'mathWrongHistory', player:player, data:data, timestamp:Date.now()});
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('saveMathWrongHistory error:', e.message); }
 }
+
 async function saveMathWeakHistory(player,question,answer,firstAnswer,chapter){
   try{
-    var d=new Date();
-    var dateStr=(d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate());
-    await addDoc(collection(db,'players',player,'mathWeakHistory'),{question:question,answer:answer,firstAnswer:firstAnswer,chapter:chapter,type:'weak',date:dateStr,timestamp:serverTimestamp()});
-  }catch(e){console.warn(e.message);}
+    var d = new Date();
+    var dateStr = (d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate());
+    var data = {question:question, answer:answer, firstAnswer:firstAnswer, chapter:chapter, type:'weak', date:dateStr, timestamp: serverTimestamp()};
+    await IDB.addToSyncQueue({type:'mathWeakHistory', player:player, data:data, timestamp:Date.now()});
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('saveMathWeakHistory error:', e.message); }
 }
 
-// ====== FIREBASE: 數學章節統計 ======
+// ====== 數學章節統計：同步佇列 ======
 async function saveMathChapterStat(player,chapter,firstCorrect,secondCorrect,wrong){
   try{
-    var ref=doc(db,'players',player,'mathChapterStats',chapter);
-    var snap=await withTimeout(getDoc(ref),8000,'mcStat');
-    var ex=snap.exists()?snap.data():{shown:0,firstCorrect:0,secondCorrect:0,wrong:0};
-    await setDoc(ref,{chapter:chapter,shown:ex.shown+1,firstCorrect:ex.firstCorrect+(firstCorrect?1:0),secondCorrect:ex.secondCorrect+(secondCorrect?1:0),wrong:ex.wrong+(wrong?1:0),lastSeen:serverTimestamp()});
-  }catch(e){console.warn(e.message);}
+    var ref = doc(db,'players',player,'mathChapterStats',chapter);
+    var snap = await withTimeout(getDoc(ref),8000,'mcStat');
+    var ex = snap.exists() ? snap.data() : {shown:0, firstCorrect:0, secondCorrect:0, wrong:0};
+    var data = {chapter:chapter, shown:ex.shown+1, firstCorrect:ex.firstCorrect+(firstCorrect?1:0), secondCorrect:ex.secondCorrect+(secondCorrect?1:0), wrong:ex.wrong+(wrong?1:0), lastSeen: serverTimestamp()};
+    await IDB.addToSyncQueue({type:'mathChapterStat', player:player, chapter:chapter, data:data, timestamp:Date.now()});
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('saveMathChapterStat error:', e.message); }
 }
 
-// ====== FIREBASE: SESSION ======
+// ====== Session：同步佇列 ======
 async function saveSession(player,played,known,unknownArr,gameType){
-  try{await addDoc(collection(db,'players',player,'sessions'),{date:serverTimestamp(),played:played,known:known,unknown:unknownArr.length,percentage:Math.round(known/played*100),durationMs:Date.now()-sessionStartTime,gameType:gameType});}catch(e){console.warn(e.message);}
+  try{
+    var record = {
+      type:'session', player:player, played:played, known:known, unknown:unknownArr.length,
+      percentage: Math.round(known/played*100), durationMs: Date.now()-sessionStartTime,
+      gameType: gameType, timestamp: Date.now()
+    };
+    await IDB.addToSyncQueue(record);
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('saveSession error:', e.message); }
 }
+
 async function saveMathSession(player,total,firstCorrect,secondCorrect,wrong){
   try{
-    var pct=total>0?Math.round((firstCorrect+secondCorrect)/total*100):0;
-    await addDoc(collection(db,'players',player,'sessions'),{date:serverTimestamp(),played:total,known:firstCorrect+secondCorrect,unknown:wrong,percentage:pct,durationMs:Date.now()-mathSessionStart,gameType:'math',firstCorrect:firstCorrect,secondCorrect:secondCorrect});
-  }catch(e){console.warn(e.message);}
+    var pct = total>0 ? Math.round((firstCorrect+secondCorrect)/total*100) : 0;
+    var record = {
+      type:'mathSession', player:player, total:total, firstCorrect:firstCorrect,
+      secondCorrect:secondCorrect, wrong:wrong, pct:pct,
+      durationMs: Date.now()-mathSessionStart, timestamp: Date.now()
+    };
+    await IDB.addToSyncQueue(record);
+    SyncEngine.syncAll();
+  }catch(e){ console.warn('saveMathSession error:', e.message); }
 }
 
-// ====== FIREBASE: SUMMARY ======
+// ====== getPlayerSummary: 並行載入 + 快取 ======
 async function getPlayerSummary(player){
   try{
-    var wSnap=await withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'sw');
-    var wSh=0,wSu=0,wK=0;wSnap.forEach(function(d){var s=d.data();wSh+=s.shown||0;wSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)wK++;});
-    var pSnap=await withTimeout(getDocs(collection(db,'players',player,'phraseStats')),10000,'sp');
-    var pSh=0,pSu=0,pK=0;pSnap.forEach(function(d){var s=d.data();pSh+=s.shown||0;pSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)pK++;});
-    var sSnap=await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'ss');
-    var sSh=0,sSu=0,sK=0;sSnap.forEach(function(d){var s=d.data();sSh+=s.shown||0;sSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)sK++;});
-    var mSnap=await withTimeout(getDocs(collection(db,'players',player,'mathChapterStats')),10000,'sm');
-    var mShown=0,mFirst=0,mCorrect=0;mSnap.forEach(function(d){var s=d.data();mShown+=s.shown||0;mFirst+=s.firstCorrect||0;mCorrect+=(s.firstCorrect||0)+(s.secondCorrect||0);});
-    var seSnap=await withTimeout(getDocs(collection(db,'players',player,'sessions')),10000,'se');
-    return{wordKnown:wK,wordRate:wSh>0?Math.round(wSu/wSh*100):0,phraseKnown:pK,phraseRate:pSh>0?Math.round(pSu/pSh*100):0,sentenceKnown:sK,sentenceRate:sSh>0?Math.round(sSu/sSh*100):0,mathFirstRate:mShown>0?Math.round(mFirst/mShown*100):0,mathRate:mShown>0?Math.round(mCorrect/mShown*100):0,sessions:seSnap.size};
-  }catch(e){console.warn(e.message);return{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0};}
+    var cached = await IDB.get('summary_'+player, 1800000); // 30分鐘快取
+    if(cached) return cached;
+    return await _computePlayerSummary(player);
+  }catch(e){
+    console.warn('getPlayerSummary error:', e.message);
+    var fallback = await IDB.get('summary_'+player, 86400000*7);
+    return fallback || {wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0};
+  }
 }
 
-// ====== FIREBASE: TASKS ======
+async function _computePlayerSummary(player){
+  // 並行載入所有統計
+  var [wSnap, pSnap, sSnap, mSnap, seSnap] = await Promise.all([
+    withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'sw'),
+    withTimeout(getDocs(collection(db,'players',player,'phraseStats')),10000,'sp'),
+    withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'ss'),
+    withTimeout(getDocs(collection(db,'players',player,'mathChapterStats')),10000,'sm'),
+    withTimeout(getDocs(collection(db,'players',player,'sessions')),10000,'se')
+  ]);
+
+  var wSh=0,wSu=0,wK=0; wSnap.forEach(function(d){var s=d.data();wSh+=s.shown||0;wSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)wK++;});
+  var pSh=0,pSu=0,pK=0; pSnap.forEach(function(d){var s=d.data();pSh+=s.shown||0;pSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)pK++;});
+  var sSh=0,sSu=0,sK=0; sSnap.forEach(function(d){var s=d.data();sSh+=s.shown||0;sSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)sK++;});
+  var mShown=0,mFirst=0,mCorrect=0; mSnap.forEach(function(d){var s=d.data();mShown+=s.shown||0;mFirst+=s.firstCorrect||0;mCorrect+=(s.firstCorrect||0)+(s.secondCorrect||0);});
+
+  var result = {
+    wordKnown:wK, wordRate:wSh>0?Math.round(wSu/wSh*100):0,
+    phraseKnown:pK, phraseRate:pSh>0?Math.round(pSu/pSh*100):0,
+    sentenceKnown:sK, sentenceRate:sSh>0?Math.round(sSu/sSh*100):0,
+    mathFirstRate:mShown>0?Math.round(mFirst/mShown*100):0,
+    mathRate:mShown>0?Math.round(mCorrect/mShown*100):0,
+    sessions:seSnap.size
+  };
+  await IDB.set('summary_'+player, result);
+  return result;
+}
+
+// ====== TASKS：快取 + 同步佇列 ======
 async function loadTasksForPlayer(player){
   try{
     updateLoadingSub('讀取任務（'+charNames[player]+'）...');
-    var wpSnap=await withTimeout(getDoc(doc(db,'tasks',player,'data','weeklyPlan')),10000,'wp');
-    weeklyPlan[player]=wpSnap.exists()?(wpSnap.data().plan||{}):{};
-    var tdSnap=await withTimeout(getDoc(doc(db,'tasks',player,'daily',todayKey())),10000,'daily');
-    if(tdSnap.exists()){tempTasks[player]=tdSnap.data().temp||[];doneTasks[player]=tdSnap.data().done||[];}
-    else{tempTasks[player]=[];doneTasks[player]=[];}
-  }catch(e){console.warn(e.message);weeklyPlan[player]=weeklyPlan[player]||{};tempTasks[player]=tempTasks[player]||[];doneTasks[player]=doneTasks[player]||[];}
+    var cached = await IDB.get('tasks_'+player, 3600000);
+    if(cached){
+      weeklyPlan[player] = cached.weeklyPlan || {};
+      tempTasks[player] = cached.tempTasks || [];
+      doneTasks[player] = cached.doneTasks || [];
+      _backgroundRefreshTasks(player);
+      return;
+    }
+    await _fetchTasksFromFirebase(player);
+  }catch(e){
+    console.warn('loadTasksForPlayer error:', e.message);
+    var fallback = await IDB.get('tasks_'+player, 86400000*7);
+    if(fallback){
+      weeklyPlan[player] = fallback.weeklyPlan || {};
+      tempTasks[player] = fallback.tempTasks || [];
+      doneTasks[player] = fallback.doneTasks || [];
+    }else{
+      weeklyPlan[player]=weeklyPlan[player]||{};tempTasks[player]=tempTasks[player]||[];doneTasks[player]=doneTasks[player]||[];
+    }
+  }
 }
-async function saveWeeklyPlanForPlayer(player,plan){await setDoc(doc(db,'tasks',player,'data','weeklyPlan'),{plan:plan,updatedAt:serverTimestamp()});weeklyPlan[player]=plan;}
-async function saveTempTasksForPlayer(player,tasks){await setDoc(doc(db,'tasks',player,'daily',todayKey()),{temp:tasks,done:doneTasks[player]||[]},{merge:true});tempTasks[player]=tasks;}
-async function markTaskDone(player,gameId){if(!doneTasks[player])doneTasks[player]=[];if(!doneTasks[player].includes(gameId)){doneTasks[player].push(gameId);await setDoc(doc(db,'tasks',player,'daily',todayKey()),{temp:tempTasks[player]||[],done:doneTasks[player]},{merge:true});}}
-function getTodayTasks(player){var dayKey=todayDayKey(),weekly=(weeklyPlan[player]&&weeklyPlan[player][dayKey])?weeklyPlan[player][dayKey]:[],temp=tempTasks[player]||[],merged=weekly.slice();temp.forEach(function(g){if(!merged.includes(g))merged.push(g);});return merged;}
+async function _fetchTasksFromFirebase(player){
+  var wpSnap = await withTimeout(getDoc(doc(db,'tasks',player,'data','weeklyPlan')),10000,'wp');
+  weeklyPlan[player] = wpSnap.exists() ? (wpSnap.data().plan||{}) : {};
+  var tdSnap = await withTimeout(getDoc(doc(db,'tasks',player,'daily',todayKey())),10000,'daily');
+  if(tdSnap.exists()){ tempTasks[player]=tdSnap.data().temp||[]; doneTasks[player]=tdSnap.data().done||[]; }
+  else{ tempTasks[player]=[]; doneTasks[player]=[]; }
+  await IDB.set('tasks_'+player, {weeklyPlan:weeklyPlan[player], tempTasks:tempTasks[player], doneTasks:doneTasks[player]});
+}
+async function _backgroundRefreshTasks(player){
+  try{
+    var wpSnap = await withTimeout(getDoc(doc(db,'tasks',player,'data','weeklyPlan')),15000,'wpBg');
+    weeklyPlan[player] = wpSnap.exists() ? (wpSnap.data().plan||{}) : {};
+    var tdSnap = await withTimeout(getDoc(doc(db,'tasks',player,'daily',todayKey())),15000,'dailyBg');
+    if(tdSnap.exists()){ tempTasks[player]=tdSnap.data().temp||[]; doneTasks[player]=tdSnap.data().done||[]; }
+    await IDB.set('tasks_'+player, {weeklyPlan:weeklyPlan[player], tempTasks:tempTasks[player], doneTasks:doneTasks[player]});
+  }catch(e){}
+}
+
+async function saveWeeklyPlanForPlayer(player,plan){
+  await setDoc(doc(db,'tasks',player,'data','weeklyPlan'),{plan:plan,updatedAt:serverTimestamp()});
+  weeklyPlan[player]=plan;
+  await IDB.set('tasks_'+player, {weeklyPlan:plan, tempTasks:tempTasks[player]||[], doneTasks:doneTasks[player]||[]});
+}
+
+async function saveTempTasksForPlayer(player,tasks){
+  await setDoc(doc(db,'tasks',player,'daily',todayKey()),{temp:tasks,done:doneTasks[player]||[]},{merge:true});
+  tempTasks[player]=tasks;
+  await IDB.set('tasks_'+player, {weeklyPlan:weeklyPlan[player]||{}, tempTasks:tasks, doneTasks:doneTasks[player]||[]});
+}
+
+async function markTaskDone(player,gameId){
+  if(!doneTasks[player]) doneTasks[player]=[];
+  if(!doneTasks[player].includes(gameId)){
+    doneTasks[player].push(gameId);
+    await IDB.set('tasks_'+player, {weeklyPlan:weeklyPlan[player]||{}, tempTasks:tempTasks[player]||[], doneTasks:doneTasks[player]});
+    await IDB.addToSyncQueue({
+      type:'taskDone', player:player, dateKey:todayKey(),
+      data: {temp:tempTasks[player]||[], done:doneTasks[player]},
+      timestamp: Date.now()
+    });
+    SyncEngine.syncAll();
+  }
+}
+
+function getTodayTasks(player){
+  var dayKey=todayDayKey(), weekly=(weeklyPlan[player]&&weeklyPlan[player][dayKey])?weeklyPlan[player][dayKey]:[], temp=tempTasks[player]||[], merged=weekly.slice();
+  temp.forEach(function(g){if(!merged.includes(g))merged.push(g);});
+  return merged;
+}
 
 // ====== SMART SELECTION ======
-function selectSmartWords(library,stats,maxCount){maxCount=maxCount||100;var now=Date.now();var scored=library.map(function(item){var w=item.word,s=stats[w],priority=0;if(!s||s.shown===0){priority=100;}else{var rate=s.success/s.shown;if(rate<0.3)priority=90;else if(rate<0.5)priority=75;else if(rate<0.7)priority=55;else if(rate<0.85)priority=35;else priority=15;if(s.lastSeen){var lastMs=s.lastSeen.toMillis?s.lastSeen.toMillis():(s.lastSeen.seconds*1000);var days=(now-lastMs)/(1000*60*60*24);if(days>30)priority+=40;else if(days>14)priority+=25;else if(days>7)priority+=15;else if(days>3)priority+=8;}}return Object.assign({},item,{priority:priority});});scored.sort(function(a,b){return b.priority-a.priority;});return shuffle(scored.slice(0,maxCount)).map(function(s){return s.word;});}
-function selectSmartSentences(library,stats,count){count=count||15;var now=Date.now();var scored=library.map(function(item){var s=stats[item.id],priority=0;if(!s||s.shown===0){priority=100;}else{var rate=s.success/s.shown;if(rate<0.3)priority=90;else if(rate<0.5)priority=75;else if(rate<0.7)priority=55;else if(rate<0.85)priority=35;else priority=15;if(s.lastSeen){var lastMs=s.lastSeen.toMillis?s.lastSeen.toMillis():(s.lastSeen.seconds*1000);var days=(now-lastMs)/(1000*60*60*24);if(days>30)priority+=40;else if(days>14)priority+=25;else if(days>7)priority+=15;else if(days>3)priority+=8;}}return Object.assign({},item,{priority:priority});});scored.sort(function(a,b){return b.priority-a.priority;});return shuffle(scored.slice(0,Math.min(count,library.length)));}
+function selectSmartWords(library,stats,maxCount){
+  maxCount=maxCount||100;var now=Date.now();
+  var scored=library.map(function(item){
+    var w=item.word,s=stats[w],priority=0;
+    if(!s||s.shown===0){priority=100;}
+    else{
+      var rate=s.success/s.shown;
+      if(rate<0.3)priority=90;else if(rate<0.5)priority=75;else if(rate<0.7)priority=55;else if(rate<0.85)priority=35;else priority=15;
+      if(s.lastSeen){
+        var lastMs = typeof s.lastSeen === 'string' ? new Date(s.lastSeen).getTime() : (s.lastSeen.toMillis?s.lastSeen.toMillis():(s.lastSeen.seconds*1000));
+        var days=(now-lastMs)/(1000*60*60*24);
+        if(days>30)priority+=40;else if(days>14)priority+=25;else if(days>7)priority+=15;else if(days>3)priority+=8;
+      }
+    }
+    return Object.assign({},item,{priority:priority});
+  });
+  scored.sort(function(a,b){return b.priority-a.priority;});
+  return shuffle(scored.slice(0,maxCount)).map(function(s){return s.word;});
+}
+
+function selectSmartSentences(library,stats,count){
+  count=count||15;var now=Date.now();
+  var scored=library.map(function(item){
+    var s=stats[item.id],priority=0;
+    if(!s||s.shown===0){priority=100;}
+    else{
+      var rate=s.success/s.shown;
+      if(rate<0.3)priority=90;else if(rate<0.5)priority=75;else if(rate<0.7)priority=55;else if(rate<0.85)priority=35;else priority=15;
+      if(s.lastSeen){
+        var lastMs = typeof s.lastSeen === 'string' ? new Date(s.lastSeen).getTime() : (s.lastSeen.toMillis?s.lastSeen.toMillis():(s.lastSeen.seconds*1000));
+        var days=(now-lastMs)/(1000*60*60*24);
+        if(days>30)priority+=40;else if(days>14)priority+=25;else if(days>7)priority+=15;else if(days>3)priority+=8;
+      }
+    }
+    return Object.assign({},item,{priority:priority});
+  });
+  scored.sort(function(a,b){return b.priority-a.priority;});
+  return shuffle(scored.slice(0,Math.min(count,library.length)));
+}
 
 // ====== MATH QUESTION GENERATOR ======
 function makeMathQuestion(chapter){
@@ -1358,7 +2046,7 @@ function tryMakeQuestion(chapter){
     case'2-5': ans=randInt(1,9);b=randInt(2,9);a=ans+b;if(a>20||a<=10)return null;return{text:a+' - '+b+' = ?',answer:ans,chapter:chapter,hint:'需要借位'};
     case'2-6':
       if(Math.random()<0.5){a=randInt(2,9);b=randInt(2,9);if(a+b>20)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:''};
-      }else{a=randInt(11,20);b=randInt(1,a-1);return{text:a+' - '+b+' = ?',answer:a-b,chapter:chapter,hint:''};}
+      else{a=randInt(11,20);b=randInt(1,a-1);return{text:a+' - '+b+' = ?',answer:a-b,chapter:chapter,hint:''};}
     case'3-1': a=randInt(1,9)*10;b=randInt(1,9)*10;if(Math.random()<0.5){if(a+b>100)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:'整十加法'};}else{if(a<b)return null;return{text:a+' - '+b+' = ?',answer:a-b,chapter:chapter,hint:'整十減法'};}
     case'3-2': a=randInt(10,79);var ta=Math.floor(a/10),ua=a%10,tb=randInt(1,Math.max(1,9-ta)),ub=randInt(0,9-ua);b=tb*10+ub;if(a+b>99)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:'不需要進位'};
     case'3-3': a=randInt(21,99);var ta2=Math.floor(a/10),ua2=a%10,tb2=randInt(1,Math.max(1,ta2-1)),ub2=randInt(0,ua2);b=tb2*10+ub2;return{text:a+' - '+b+' = ?',answer:a-b,chapter:chapter,hint:'不需要借位'};
@@ -1391,45 +2079,97 @@ function buildMathQuestions(player){
     while(generated<count&&tries<100){
       tries++;
       var q=makeMathQuestion(chapter);
-      if(q){{newQs.push(q);generated++;}}
+      if(q){newQs.push(q);generated++;}
     }
   });
   return shuffle(priorityQs).concat(shuffle(newQs));
 }
 
-// ====== INIT ======
+/* ============================================================
+   🚀 OPTIMIZED INIT: 極速啟動
+   ============================================================ */
 async function init(){
-  if(isInitRunning)return;isInitRunning=true;window.__APP_INITIALIZED__=true;
-  buildSkyline();showLoading('連接城市資料庫...','');startLoadingTimer();
-  try{
-    PARENT_PIN=await loadParentPin();
-    await loadWordLibrary();await loadPhraseLibrary();await loadSentenceLibrary();
-    updateLoadingSub('讀取玩家記錄...');
-    var hSum=await getPlayerSummary('hayden'),cSum=await getPlayerSummary('celine');
-    updatePlayerPreviews(hSum,cSum);
-    hideLoading();setBodyScene('scene-player');showPage('page-player');
-  }catch(e){
-    console.error('Init error:',e);isInitRunning=false;clearLoadingTimers();
-    document.getElementById('loading-text').textContent='⚠️ 連接出現問題';
-    document.getElementById('loading-sub').textContent=e.message||'請檢查網絡';
-    document.getElementById('loading-timeout-msg').style.display='block';
-    document.getElementById('loading-retry-btn').style.display='inline-block';
+  if(isInitRunning) return;
+  isInitRunning = true;
+  window.__APP_INITIALIZED__ = true;
+  buildSkyline();
+
+  // 1. 初始化 IndexedDB（很快）
+  await IDB.init();
+
+  // 2. 立即顯示畫面（0ms延遲）
+  setBodyScene('scene-player');
+  showPage('page-player');
+  hideLoading();
+
+  // 3. 嘗試從快取顯示玩家預覽
+  var cachedHayden = await IDB.get('summary_hayden', 86400000*7);
+  var cachedCeline = await IDB.get('summary_celine', 86400000*7);
+  if(cachedHayden || cachedCeline){
+    updatePlayerPreviews(cachedHayden || {wordKnown:0}, cachedCeline || {wordKnown:0});
+  } else {
+    document.getElementById('hayden-preview').textContent = '準備中...';
+    document.getElementById('celine-preview').textContent = '準備中...';
   }
+
+  // 4. 背景並行載入核心數據（不阻塞畫面）
+  Promise.all([
+    loadParentPin(),
+    getPlayerSummary('hayden'),
+    getPlayerSummary('celine')
+  ]).then(function([pin, hSum, cSum]){
+    PARENT_PIN = pin;
+    updatePlayerPreviews(hSum, cSum);
+    // 更新快取
+    IDB.set('summary_hayden', hSum);
+    IDB.set('summary_celine', cSum);
+  }).catch(function(e){
+    console.warn('Background init load failed:', e.message);
+  });
+
+  // 5. 背景載入字庫（用戶已經可以點選角色了）
+  Promise.all([
+    loadWordLibrary(),
+    loadPhraseLibrary(),
+    loadSentenceLibrary()
+  ]).then(function(){
+    console.log('📚 字庫背景載入完成');
+  }).catch(function(e){
+    console.warn('Background library load failed:', e.message);
+  });
+
+  // 6. 嘗試同步任何待上傳的記錄
+  SyncEngine.syncAll();
 }
+
 function updatePlayerPreviews(hSum,cSum){
-  document.getElementById('hayden-preview').textContent=hSum.wordKnown>0?'認識 '+hSum.wordKnown+'字 '+hSum.phraseKnown+'詞 '+hSum.sentenceKnown+'句 ⭐':'開始第一次冒險！';
-  document.getElementById('celine-preview').textContent=cSum.wordKnown>0?'認識 '+cSum.wordKnown+'字 '+cSum.phraseKnown+'詞 '+cSum.sentenceKnown+'句 ⭐':'開始第一次冒險！';
+  document.getElementById('hayden-preview').textContent = (hSum&&hSum.wordKnown>0) ? '認識 '+hSum.wordKnown+'字 '+hSum.phraseKnown+'詞 '+hSum.sentenceKnown+'句 ⭐' : '開始第一次冒險！';
+  document.getElementById('celine-preview').textContent = (cSum&&cSum.wordKnown>0) ? '認識 '+cSum.wordKnown+'字 '+cSum.phraseKnown+'詞 '+cSum.sentenceKnown+'句 ⭐' : '開始第一次冒險！';
 }
 
 // ====== SELECT PLAYER ======
 window.selectPlayer=async function(player){
-  currentPlayer=player;showLoading('準備冒險裝備...','');startLoadingTimer();
+  currentPlayer=player;
+  showLoading('準備冒險裝備...','');
+  startLoadingTimer();
   try{
-    wordStatsMap=await loadPlayerStats(player);phraseStatsMap=await loadPhraseStats(player);sentenceStatsMap=await loadSentenceStats(player);
-    await loadTasksForPlayer(player);await loadMathSettings(player);await loadMathWrongPool(player);
-    var summary=await getPlayerSummary(player);
-    hideLoading();renderHub(player,summary);
-  }catch(e){console.error(e);hideLoading();renderHub(player,{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});}
+    // 並行載入所有需要的數據
+    await Promise.all([
+      loadPlayerStats(player),
+      loadPhraseStats(player),
+      loadSentenceStats(player),
+      loadTasksForPlayer(player),
+      loadMathSettings(player),
+      loadMathWrongPool(player)
+    ]);
+    var summary = await getPlayerSummary(player);
+    hideLoading();
+    renderHub(player,summary);
+  }catch(e){
+    console.error(e);
+    hideLoading();
+    renderHub(player,{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});
+  }
 };
 
 // ====== RENDER HUB ======
@@ -1446,7 +2186,7 @@ function renderHub(player,summary){
     todayTasks.forEach(function(gameId){
       var game=GAME_CATALOG.find(function(g){return g.id===gameId;});if(!game)return;
       var done=(doneTasks[player]||[]).includes(gameId);
-      html+='<div class="task-item" onclick="'+(game.available&&!done?'startGameFromHub(\''+gameId+'\')':'')+'">'+'<div class="task-item-icon">'+game.icon+'</div>'+'<div class="task-item-info"><div class="task-item-name">'+game.name+'</div><div class="task-item-desc">'+game.desc+'</div></div>'+(done?'<span class="task-done-badge">✅ 完成</span>':'<span class="task-badge">📌 今日任務</span>')+'</div>';
+      html+='<div class="task-item" onclick="'+(game.available&&!done?'startGameFromHub(''+gameId+'')':'')+'">'+'<div class="task-item-icon">'+game.icon+'</div>'+'<div class="task-item-info"><div class="task-item-name">'+game.name+'</div><div class="task-item-desc">'+game.desc+'</div></div>'+(done?'<span class="task-done-badge">✅ 完成</span>':'<span class="task-badge">📌 今日任務</span>')+'</div>';
     });
     document.getElementById('hub-tasks-list').innerHTML=html;
   }else{tasksSection.style.display='none';}
@@ -1457,7 +2197,7 @@ function renderHub(player,summary){
     var isTask=todayTasks.includes(game.id),isDone=(doneTasks[player]||[]).includes(game.id);
     if(game.available){
       var ec=game.id==='phrase'?'phrase-card':game.id==='sentence'?'sentence-card':game.id==='math'?'math-card':'';
-      cardsHtml+='<div class="game-card available '+ec+(isTask?' has-task':'')+'" onclick="startGameFromHub(\''+game.id+'\')">'+(isTask?'<div class="game-task-indicator">'+(isDone?'✅':'📌')+'</div>':'')+'<div class="game-icon">'+game.icon+'</div><div class="game-name">'+game.name+'</div><div class="game-desc">'+game.desc+'</div><div class="game-btn">▶ 開始</div></div>';
+      cardsHtml+='<div class="game-card available '+ec+(isTask?' has-task':'')+'" onclick="startGameFromHub(''+game.id+'')">'+(isTask?'<div class="game-task-indicator">'+(isDone?'✅':'📌')+'</div>':'')+'<div class="game-icon">'+game.icon+'</div><div class="game-name">'+game.name+'</div><div class="game-desc">'+game.desc+'</div><div class="game-btn">▶ 開始</div></div>';
     }else{
       cardsHtml+='<div class="game-card locked"><div class="game-icon">'+game.icon+'</div><div class="game-name">'+game.name+'</div><div class="game-desc">'+game.desc+'</div><div class="lock-icon">🔒</div></div>';
     }
@@ -1524,7 +2264,7 @@ function updateCardScene(isInit){
   if(changed&&!isInit&&currentSceneIndex>0&&currentSceneIndex!==lastMilestone){lastMilestone=currentSceneIndex;playMilestoneSound();var keys=['start','park','shop','school','fun','castle'];var key=keys[currentSceneIndex];if(dialogues[key])setDialogue(pickRandom(dialogues[key]));if(currentSceneIndex<5)showMilestonePopup(scene);}
 }
 function showMilestonePopup(scene){var popup=document.createElement('div');popup.className='milestone-popup';popup.innerHTML='<div style="font-size:60px;margin-bottom:10px;">'+scene.icon+'</div><div style="font-size:24px;font-weight:bold;color:#333;margin-bottom:8px;">到達 '+scene.name+'！</div><div style="font-size:18px;color:#888;">太棒了！繼續冒險吧！'+scene.sky+'</div>';document.body.appendChild(popup);createConfetti();setTimeout(function(){popup.style.transition='all 0.5s';popup.style.opacity='0';popup.style.transform='translate(-50%,-50%) scale(0.5)';setTimeout(function(){popup.remove();},500);},1800);}
-function showAllCardsDoneCelebration(){playCelebrationSound();createConfetti();setDialogue(pickRandom(dialogues.castle));var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉🏰🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">城市英雄 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:8px;">所有文字都找回來了！</p><p style="font-size:18px;color:#888;margin-bottom:20px;">城市恢復正常了！你真厲害！🏙️✨</p><button class="btn btn-again" onclick="this.closest(\'.celebration\').remove();finishCardGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
+function showAllCardsDoneCelebration(){playCelebrationSound();createConfetti();setDialogue(pickRandom(dialogues.castle));var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉🏰🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">城市英雄 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:8px;">所有文字都找回來了！</p><p style="font-size:18px;color:#888;margin-bottom:20px;">城市恢復正常了！你真厲害！🏙️✨</p><button class="btn btn-again" onclick="this.closest('.celebration').remove();finishCardGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
 function updateProgress(){var pct=allWords.length>0?(knownWords.length/allWords.length*100):0;document.getElementById('progress-fill').style.width=pct+'%';document.getElementById('progress-text').textContent=knownWords.length+' / '+allWords.length;}
 
 // ====== SENTENCE GAME ======
@@ -1562,7 +2302,7 @@ window.answerSentence=function(known){
   addCollectible();updateSentenceScene(sentenceResults.length);
   speakText(sentObj.sentence,0.7,function(){isSpeaking=false;document.getElementById('sentence-reading-indicator').style.display='none';setTimeout(function(){showSentence(currentSentIdx+1);},400);});
 };
-function showAllSentenceDoneCelebration(){playCelebrationSound();createConfetti();setDialogue('你認識全部句子！太厲害！');var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉📖🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">句子大師 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:20px;">所有句子都認識！📖✨</p><button class="btn btn-again" onclick="this.closest(\'.celebration\').remove();finishSentenceGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
+function showAllSentenceDoneCelebration(){playCelebrationSound();createConfetti();setDialogue('你認識全部句子！太厲害！');var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉📖🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">句子大師 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:20px;">所有句子都認識！📖✨</p><button class="btn btn-again" onclick="this.closest('.celebration').remove();finishSentenceGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
 
 // ====== MATH GAME ======
 function startMathGame(){
@@ -1577,7 +2317,7 @@ function renderMathQuestion(){
   document.getElementById('math-progress-text').textContent='第 '+(mathCurrentIdx+1)+' / '+mathQuestions.length+' 題';
   document.getElementById('math-progress-bar').style.width=(mathCurrentIdx/mathQuestions.length*100)+'%';
   var qBox=document.getElementById('math-question-box');qBox.className='math-question-box state-normal';
-    document.getElementById('math-question-text').textContent=q.text;
+  document.getElementById('math-question-text').textContent=q.text;
   document.getElementById('math-question-hint').textContent=q.hint||'';
   document.getElementById('math-result-display').innerHTML='';
   document.getElementById('math-input-number').textContent='?';
@@ -1603,13 +2343,11 @@ function mathCheckAnswer(){
   document.getElementById('math-confirm-btn').disabled=true;document.querySelectorAll('.math-key').forEach(function(k){k.disabled=true;});
   if(correct){
     if(!mathIsRetry){
-      // 一次答對
       qBox.className='math-question-box state-correct';resultDiv.innerHTML='<div class="math-result-correct">✅ 答對了！'+q.answer+' 👏</div>';
       setMathBubble(pickRandom(dialogues.mathCorrect));playCorrectSound();mathJumpChar();createMathFloatEmoji();
       mathResults.push({question:q.text,answer:q.answer,userAnswer:userAns,firstAnswer:userAns,chapter:q.chapter,result:'first',fromPool:q.fromPool||false});
       mathIsAnswered=true;setTimeout(mathNextQuestion,800);
     }else{
-      // 第二次答對
       qBox.className='math-question-box state-second';resultDiv.innerHTML='<div class="math-result-second">⭐ 第二次答對！加油！</div>';
       setMathBubble(pickRandom(dialogues.mathSecond));playCorrectSound();
       mathResults.push({question:q.text,answer:q.answer,userAnswer:userAns,firstAnswer:mathFirstAnswer,chapter:q.chapter,result:'second',fromPool:q.fromPool||false});
@@ -1617,7 +2355,6 @@ function mathCheckAnswer(){
     }
   }else{
     if(!mathIsRetry){
-      // 第一次答錯，給機會再試
       qBox.className='math-question-box state-retry';resultDiv.innerHTML='<div class="math-result-retry">💪 再試一次！</div>';
       setMathBubble(pickRandom(dialogues.mathRetry));playRetrySound();
       mathIsRetry=true;
@@ -1627,7 +2364,6 @@ function mathCheckAnswer(){
         document.querySelectorAll('.math-key').forEach(function(k){k.disabled=false;});
       },1000);
     }else{
-      // 第二次又錯
       qBox.className='math-question-box state-wrong';resultDiv.innerHTML='<div class="math-result-wrong">❌ 正確答案是 '+q.answer+'</div>';
       setMathBubble(pickRandom(dialogues.mathWrong));playWrongSound();
       mathResults.push({question:q.text,answer:q.answer,userAnswer:userAns,firstAnswer:mathFirstAnswer,chapter:q.chapter,result:'wrong',fromPool:q.fromPool||false});
@@ -1672,7 +2408,7 @@ window.mathShowConfirmFinish=function(){
   var answered=mathCurrentIdx,total=mathQuestions.length,remaining=total-answered;
   if(remaining===0){saveMathResults();return;}
   var overlay=document.createElement('div');overlay.className='celebration';overlay.id='math-confirm-overlay';
-  overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的練習？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">已完成 <b style="color:#48c774;">'+answered+'</b> 題，還有 <b style="color:#ff6b6b;">'+remaining+'</b> 題未完成</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById(\'math-confirm-overlay\').remove();saveMathResults();">✅ 結束練習</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById(\'math-confirm-overlay\').remove();">↩️ 繼續練習</button></div></div>';
+  overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的練習？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">已完成 <b style="color:#48c774;">'+answered+'</b> 題，還有 <b style="color:#ff6b6b;">'+remaining+'</b> 題未完成</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById('math-confirm-overlay').remove();saveMathResults();">✅ 結束練習</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById('math-confirm-overlay').remove();">↩️ 繼續練習</button></div></div>';
   document.body.appendChild(overlay);
 };
 window.saveMathResults=saveMathResults;
@@ -1701,23 +2437,20 @@ function renderMathReport(firstCount,secondCount,wrongCount){
 }
 window.replayMathGame=function(){startMathGame();};
 
-/* ===== END OF PART 1 - 請直接貼上 PART 2 ===== */
-  /* ===== START OF PART 2 - 直接接在 PART 1 後面 ===== */
-
-// ====== CONFIRM FINISH (Card/Sentence) ======
+/* ====== CONFIRM FINISH (Card/Sentence) ====== */
 window.showConfirmFinish=function(){
   if(currentGameType==='sentence'){
     if(window.speechSynthesis)window.speechSynthesis.cancel();isSpeaking=false;
     var answered=sentenceResults.length,total=currentSentences?currentSentences.length:15,remaining=total-answered;
     if(remaining===0){finishSentenceGame();return;}
     var overlay=document.createElement('div');overlay.className='celebration';overlay.id='confirm-overlay';
-    overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的冒險？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">已完成 <b style="color:#48c774;">'+answered+'</b> 句，還有 <b style="color:#ff6b6b;">'+remaining+'</b> 句未完成</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();finishSentenceGame();">✅ 結束冒險</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();">↩️ 繼續冒險</button></div></div>';
+    overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的冒險？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">已完成 <b style="color:#48c774;">'+answered+'</b> 句，還有 <b style="color:#ff6b6b;">'+remaining+'</b> 句未完成</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById('confirm-overlay').remove();finishSentenceGame();">✅ 結束冒險</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById('confirm-overlay').remove();">↩️ 繼續冒險</button></div></div>';
     document.body.appendChild(overlay);
   }else{
     var remaining=allWords.length-knownWords.length;
     if(remaining===0){finishCardGame();return;}
     var overlay=document.createElement('div');overlay.className='celebration';overlay.id='confirm-overlay';
-    overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的冒險？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">還有 <b style="color:#ff6b6b;">'+remaining+'</b> 個文字未找到</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();finishCardGame();">✅ 結束冒險</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();">↩️ 繼續冒險</button></div></div>';
+    overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的冒險？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">還有 <b style="color:#ff6b6b;">'+remaining+'</b> 個文字未找到</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById('confirm-overlay').remove();finishCardGame();">✅ 結束冒險</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById('confirm-overlay').remove();">↩️ 繼續冒險</button></div></div>';
     document.body.appendChild(overlay);
   }
 };
@@ -1808,9 +2541,9 @@ function renderReport(knownList,unknownList,summary){
     else unknownList.forEach(function(r){var preview=r.sentence.substring(0,5)+(r.sentence.length>5?'...':'');unknownHtml+='<span class="report-word unknown sentence-word" onclick="speakSentenceFromReport('+(r.roundNum-1)+')" title="'+r.sentence+'"><span class="sentence-report-num">第'+r.roundNum+'句</span><span class="sentence-report-text">'+preview+'</span><span class="sound-icon">🔊</span></span>';});
   }else{
     if(knownList.length===0){knownHtml='<p class="empty-message">（還沒有找到文字）</p>';}
-    else knownList.forEach(function(w){knownHtml+='<span class="report-word known" onclick="speakWord(\''+w+'\')" title="點我發音">'+w+' <span class="sound-icon">🔊</span></span>';});
+    else knownList.forEach(function(w){knownHtml+='<span class="report-word known" onclick="speakWord(''+w+'')" title="點我發音">'+w+' <span class="sound-icon">🔊</span></span>';});
     if(unknownList.length===0){unknownHtml='<p class="empty-message">（全部都找回來了！🎉）</p>';}
-    else unknownList.forEach(function(w){unknownHtml+='<span class="report-word unknown" onclick="speakWord(\''+w+'\')" title="點我發音">'+w+' <span class="sound-icon">🔊</span></span>';});
+    else unknownList.forEach(function(w){unknownHtml+='<span class="report-word unknown" onclick="speakWord(''+w+'')" title="點我發音">'+w+' <span class="sound-icon">🔊</span></span>';});
   }
   document.getElementById('known-words').innerHTML=knownHtml;
   document.getElementById('unknown-words').innerHTML=unknownHtml;
@@ -1851,8 +2584,14 @@ window.replayGame=async function(){
 window.backToHub=async function(){
   showLoading('返回大廳...','');startLoadingTimer();
   try{
-    await loadPlayerStats(currentPlayer);await loadPhraseStats(currentPlayer);await loadSentenceStats(currentPlayer);
-    await loadTasksForPlayer(currentPlayer);await loadMathSettings(currentPlayer);await loadMathWrongPool(currentPlayer);
+    await Promise.all([
+      loadPlayerStats(currentPlayer),
+      loadPhraseStats(currentPlayer),
+      loadSentenceStats(currentPlayer),
+      loadTasksForPlayer(currentPlayer),
+      loadMathSettings(currentPlayer),
+      loadMathWrongPool(currentPlayer)
+    ]);
     var summary=await getPlayerSummary(currentPlayer);hideLoading();renderHub(currentPlayer,summary);
   }catch(e){console.error(e);hideLoading();renderHub(currentPlayer,{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});}
 };
@@ -1860,7 +2599,7 @@ window.backToHub=async function(){
 window.backToPlayerSelect=async function(){
   showLoading('返回主頁...','');startLoadingTimer();
   try{
-    await loadWordLibrary();await loadPhraseLibrary();await loadSentenceLibrary();
+    await Promise.all([loadWordLibrary(),loadPhraseLibrary(),loadSentenceLibrary()]);
     var hSum=await getPlayerSummary('hayden'),cSum=await getPlayerSummary('celine');updatePlayerPreviews(hSum,cSum);
   }catch(e){console.error(e);}
   hideLoading();setBodyScene('scene-player');showPage('page-player');
@@ -1869,7 +2608,7 @@ window.backToPlayerSelect=async function(){
 // ====== PIN ======
 window.showPinEntry=function(){
   var overlay=document.createElement('div');overlay.className='celebration';overlay.id='pin-overlay';
-  overlay.innerHTML='<div class="pin-container"><h2>🔒 家長登入</h2><input type="password" class="pin-input" id="pin-input-field" placeholder="••••" maxlength="20"/><div class="pin-error" id="pin-error"></div><div style="margin-top:15px;display:flex;gap:10px;justify-content:center;"><button class="btn btn-parent btn-sm" onclick="checkPin()">✅ 確認</button><button class="btn btn-back btn-sm" onclick="document.getElementById(\'pin-overlay\').remove()">取消</button></div></div>';
+  overlay.innerHTML='<div class="pin-container"><h2>🔒 家長登入</h2><input type="password" class="pin-input" id="pin-input-field" placeholder="••••" maxlength="20"/><div class="pin-error" id="pin-error"></div><div style="margin-top:15px;display:flex;gap:10px;justify-content:center;"><button class="btn btn-parent btn-sm" onclick="checkPin()">✅ 確認</button><button class="btn btn-back btn-sm" onclick="document.getElementById('pin-overlay').remove()">取消</button></div></div>';
   document.body.appendChild(overlay);setTimeout(function(){document.getElementById('pin-input-field').focus();},100);
 };
 window.checkPin=function(){
@@ -1881,10 +2620,12 @@ window.checkPin=function(){
 async function openParentDashboard(){
   showLoading('載入管理後台...','');startLoadingTimer();
   try{
-    await loadWordLibrary();await loadPhraseLibrary();await loadSentenceLibrary();
-    await loadTasksForPlayer('hayden');await loadTasksForPlayer('celine');
-    await loadMathSettings('hayden');await loadMathSettings('celine');
-    await loadMathWrongPool('hayden');await loadMathWrongPool('celine');
+    await Promise.all([
+      loadWordLibrary(),loadPhraseLibrary(),loadSentenceLibrary(),
+      loadTasksForPlayer('hayden'),loadTasksForPlayer('celine'),
+      loadMathSettings('hayden'),loadMathSettings('celine'),
+      loadMathWrongPool('hayden'),loadMathWrongPool('celine')
+    ]);
     await loadParentStats();
     hideLoading();setBodyScene('scene-parent');showPage('page-parent');
     renderWordChips();renderPhraseChips();renderSentenceList();
@@ -1931,7 +2672,7 @@ function renderWeeklyGrid(){
     html+='<tr><td class="day-label'+(isWeekend?' weekend-label':'')+'">'+DAY_EN[idx]+'</td>';
     availableGames.forEach(function(game){
       var checked=(plan[dayKey]||[]).includes(game.id);
-      html+='<td><div class="weekly-cell'+(checked?' checked':'')+'" onclick="toggleWeeklyCell(\''+dayKey+'\',\''+game.id+'\')">'+(checked?'✓':'')+'</div></td>';
+      html+='<td><div class="weekly-cell'+(checked?' checked':'')+'" onclick="toggleWeeklyCell(''+dayKey+'',''+game.id+'')">'+(checked?'✓':'')+'</div></td>';
     });
     html+='</tr>';
   });
@@ -1950,7 +2691,7 @@ function renderTempGames(){
   var player=planPlayer,temp=tempTasks[player]||[],html='';
   GAME_CATALOG.forEach(function(game){
     var isSelected=temp.includes(game.id),isLocked=!game.available;
-    html+='<div class="temp-game-row'+(isSelected?' selected':'')+(isLocked?' locked-game':'')+'" '+(isLocked?'':' onclick="toggleTempGame(\''+game.id+'\')"')+'><div class="temp-game-icon">'+game.icon+'</div><div class="temp-game-name">'+game.name+(isLocked?' 🔒':'')+'</div><div class="temp-game-check">'+(isSelected?'✓':'')+'</div></div>';
+    html+='<div class="temp-game-row'+(isSelected?' selected':'')+(isLocked?' locked-game':'')+'" '+(isLocked?'':' onclick="toggleTempGame(''+game.id+'')"')+'><div class="temp-game-icon">'+game.icon+'</div><div class="temp-game-name">'+game.name+(isLocked?' 🔒':'')+'</div><div class="temp-game-check">'+(isSelected?'✓':'')+'</div></div>';
   });
   document.getElementById('temp-games-list').innerHTML=html;
 }
@@ -1981,7 +2722,7 @@ function renderCompletionStatus(){
 function renderWordChips(){
   var container=document.getElementById('word-chips-display');document.getElementById('total-word-count').textContent=fullWordLibrary.length;
   if(fullWordLibrary.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;">字庫為空，請新增字詞</p>';return;}
-  var html='';fullWordLibrary.forEach(function(item){html+='<div class="word-chip">'+item.word+'<button class="chip-delete" onclick="removeWord(\''+item.id+'\')">✕</button></div>';});container.innerHTML=html;
+  var html='';fullWordLibrary.forEach(function(item){html+='<div class="word-chip">'+item.word+'<button class="chip-delete" onclick="removeWord(''+item.id+'')">✕</button></div>';});container.innerHTML=html;
 }
 window.removeWord=async function(docId){if(!confirm('確定要刪除這個字嗎？'))return;await deleteWordFromLibrary(docId);await loadWordLibrary();renderWordChips();};
 window.addWordsToLibrary=async function(){
@@ -1995,7 +2736,7 @@ window.addWordsToLibrary=async function(){
 function renderPhraseChips(){
   var container=document.getElementById('phrase-chips-display');document.getElementById('total-phrase-count').textContent=fullPhraseLibrary.length;
   if(fullPhraseLibrary.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;">詞語庫為空，請新增詞語</p>';return;}
-  var html='';fullPhraseLibrary.forEach(function(item){html+='<div class="word-chip phrase-chip">'+item.word+'<button class="chip-delete" onclick="removePhrase(\''+item.id+'\')">✕</button></div>';});container.innerHTML=html;
+  var html='';fullPhraseLibrary.forEach(function(item){html+='<div class="word-chip phrase-chip">'+item.word+'<button class="chip-delete" onclick="removePhrase(''+item.id+'')">✕</button></div>';});container.innerHTML=html;
 }
 window.removePhrase=async function(docId){if(!confirm('確定要刪除這個詞語嗎？'))return;await deletePhraseFromLibrary(docId);await loadPhraseLibrary();renderPhraseChips();};
 window.addPhrasesToLibrary=async function(){
@@ -2010,7 +2751,7 @@ function renderSentenceList(){
   var container=document.getElementById('sentence-list-display');document.getElementById('total-sentence-count').textContent=fullSentenceLibrary.length;
   if(fullSentenceLibrary.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;padding:10px;">句子庫為空，請新增句子</p>';return;}
   var html='';
-  fullSentenceLibrary.forEach(function(item,idx){html+='<div class="sentence-lib-item"><span class="sentence-lib-num">'+(idx+1)+'.</span><span class="sentence-lib-text">'+item.sentence+'</span><button class="sentence-lib-delete" onclick="removeSentence(\''+item.id+'\')">✕</button></div>';});
+  fullSentenceLibrary.forEach(function(item,idx){html+='<div class="sentence-lib-item"><span class="sentence-lib-num">'+(idx+1)+'.</span><span class="sentence-lib-text">'+item.sentence+'</span><button class="sentence-lib-delete" onclick="removeSentence(''+item.id+'')">✕</button></div>';});
   container.innerHTML=html;
 }
 window.removeSentence=async function(docId){if(!confirm('確定要刪除這個句子嗎？'))return;await deleteSentenceFromLibrary(docId);await loadSentenceLibrary();renderSentenceList();};
@@ -2099,11 +2840,13 @@ async function renderMathWrongList(){
 async function loadParentStats(){
   try{
     updateLoadingSub('讀取統計數據...');
-    var hWordStats=await loadStatsForParent('hayden','wordStats');var cWordStats=await loadStatsForParent('celine','wordStats');
-    var hPhraseStats=await loadStatsForParent('hayden','phraseStats');var cPhraseStats=await loadStatsForParent('celine','phraseStats');
-    var hSentStats=await loadStatsForParent('hayden','sentenceStats');var cSentStats=await loadStatsForParent('celine','sentenceStats');
-    var hMathStats=await loadStatsForParent('hayden','mathChapterStats');var cMathStats=await loadStatsForParent('celine','mathChapterStats');
-    var hSummary=await getPlayerSummary('hayden'),cSummary=await getPlayerSummary('celine');
+    var [hWordStats, cWordStats, hPhraseStats, cPhraseStats, hSentStats, cSentStats, hMathStats, cMathStats, hSummary, cSummary] = await Promise.all([
+      loadStatsForParent('hayden','wordStats'), loadStatsForParent('celine','wordStats'),
+      loadStatsForParent('hayden','phraseStats'), loadStatsForParent('celine','phraseStats'),
+      loadStatsForParent('hayden','sentenceStats'), loadStatsForParent('celine','sentenceStats'),
+      loadStatsForParent('hayden','mathChapterStats'), loadStatsForParent('celine','mathChapterStats'),
+      getPlayerSummary('hayden'), getPlayerSummary('celine')
+    ]);
 
     document.getElementById('p-hayden-known').textContent=hSummary.wordKnown+' 個字';
     document.getElementById('p-hayden-rate').textContent=hSummary.wordRate+'%';
@@ -2160,8 +2903,10 @@ function renderMathChapterStats(containerId,stats){
 async function loadSessions(){
   var container=document.getElementById('sessions-list');
   try{
-    var hSnap=await withTimeout(getDocs(query(collection(db,'players','hayden','sessions'),orderBy('date','desc'),limit(10))),10000,'hSess');
-    var cSnap=await withTimeout(getDocs(query(collection(db,'players','celine','sessions'),orderBy('date','desc'),limit(10))),10000,'cSess');
+    var [hSnap, cSnap] = await Promise.all([
+      withTimeout(getDocs(query(collection(db,'players','hayden','sessions'),orderBy('date','desc'),limit(10))),10000,'hSess'),
+      withTimeout(getDocs(query(collection(db,'players','celine','sessions'),orderBy('date','desc'),limit(10))),10000,'cSess')
+    ]);
     var sessions=[];
     hSnap.forEach(function(d){sessions.push(Object.assign({player:'hayden'},d.data()));});
     cSnap.forEach(function(d){sessions.push(Object.assign({player:'celine'},d.data()));});
@@ -2190,7 +2935,13 @@ window.resetPlayerData=async function(player){
   try{
     await deleteSubCollection(player,'wordStats');await deleteSubCollection(player,'phraseStats');await deleteSubCollection(player,'sentenceStats');
     await deleteSubCollection(player,'mathChapterStats');await deleteSubCollection(player,'mathWrongHistory');await deleteSubCollection(player,'mathWeakHistory');await deleteSubCollection(player,'mathWrongPool');await deleteSubCollection(player,'sessions');
-    mathWrongPool[player]=[];hideLoading();document.getElementById('reset-status').textContent=name+' 的數據已成功重設！';await loadParentStats();
+    mathWrongPool[player]=[];
+    // 清除 IndexedDB 快取
+    await IDB.set('wordStats_'+player, {});
+    await IDB.set('phraseStats_'+player, {});
+    await IDB.set('sentenceStats_'+player, {});
+    await IDB.set('summary_'+player, {wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});
+    hideLoading();document.getElementById('reset-status').textContent=name+' 的數據已成功重設！';await loadParentStats();
   }catch(e){hideLoading();document.getElementById('reset-status').textContent='重設失敗：'+e.message;}
 };
 window.resetAllPlayerData=async function(){
@@ -2200,6 +2951,10 @@ window.resetAllPlayerData=async function(){
       await deleteSubCollection(p,'wordStats');await deleteSubCollection(p,'phraseStats');await deleteSubCollection(p,'sentenceStats');
       await deleteSubCollection(p,'mathChapterStats');await deleteSubCollection(p,'mathWrongHistory');await deleteSubCollection(p,'mathWeakHistory');await deleteSubCollection(p,'mathWrongPool');await deleteSubCollection(p,'sessions');
       mathWrongPool[p]=[];
+      await IDB.set('wordStats_'+p, {});
+      await IDB.set('phraseStats_'+p, {});
+      await IDB.set('sentenceStats_'+p, {});
+      await IDB.set('summary_'+p, {wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});
     }
     hideLoading();document.getElementById('reset-status').textContent='所有玩家的數據已成功重設！';await loadParentStats();
   }catch(e){hideLoading();document.getElementById('reset-status').textContent='重設失敗：'+e.message;}
