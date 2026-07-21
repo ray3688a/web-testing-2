@@ -2051,7 +2051,7 @@ function tryMakeQuestion(chapter){
     case'2-4': a=randInt(2,9);b=randInt(2,9);if(a+b<=10||a+b>20)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:'需要進位'};
     case'2-5': ans=randInt(1,9);b=randInt(2,9);a=ans+b;if(a>20||a<=10)return null;return{text:a+' - '+b+' = ?',answer:ans,chapter:chapter,hint:'需要借位'};
     case'2-6':
-      if(Math.random()<0.5){a=randInt(2,9);b=randInt(2,9);if(a+b>20)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:''};
+      if(Math.random()<0.5){a=randInt(2,9);b=randInt(2,9);if(a+b>20)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:''};}
       else{a=randInt(11,20);b=randInt(1,a-1);return{text:a+' - '+b+' = ?',answer:a-b,chapter:chapter,hint:''};}
     case'3-1': a=randInt(1,9)*10;b=randInt(1,9)*10;if(Math.random()<0.5){if(a+b>100)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:'整十加法'};}else{if(a<b)return null;return{text:a+' - '+b+' = ?',answer:a-b,chapter:chapter,hint:'整十減法'};}
     case'3-2': a=randInt(10,79);var ta=Math.floor(a/10),ua=a%10,tb=randInt(1,Math.max(1,9-ta)),ub=randInt(0,9-ua);b=tb*10+ub;if(a+b>99)return null;return{text:a+' + '+b+' = ?',answer:a+b,chapter:chapter,hint:'不需要進位'};
@@ -2100,71 +2100,61 @@ async function init(){
   window.__APP_INITIALIZED__ = true;
   buildSkyline();
 
-  try{
-    console.log('[Init] 開始初始化...');
+  console.log('[Init] 開始初始化...');
 
-    // 1. 初始化 IndexedDB（很快）
-    await IDB.init();
-    console.log('[Init] IndexedDB 就緒');
-
-    // 2. 立即顯示畫面（0ms延遲）
-    setBodyScene('scene-player');
-    showPage('page-player');
-    hideLoading();
-    console.log('[Init] 畫面已顯示');
-
-    // 3. 嘗試從快取顯示玩家預覽
-    var cachedHayden = await IDB.get('summary_hayden', 86400000*7);
-    var cachedCeline = await IDB.get('summary_celine', 86400000*7);
-    if(cachedHayden || cachedCeline){
-      updatePlayerPreviews(cachedHayden || {wordKnown:0}, cachedCeline || {wordKnown:0});
-      console.log('[Init] 已從快取顯示預覽');
-    } else {
-      document.getElementById('hayden-preview').textContent = '準備中...';
-      document.getElementById('celine-preview').textContent = '準備中...';
-    }
-
-    // 4. 背景並行載入核心數據（不阻塞畫面）
-    Promise.all([
-      loadParentPin(),
-      getPlayerSummary('hayden'),
-      getPlayerSummary('celine')
-    ]).then(function([pin, hSum, cSum]){
-      PARENT_PIN = pin;
-      updatePlayerPreviews(hSum, cSum);
-      IDB.set('summary_hayden', hSum);
-      IDB.set('summary_celine', cSum);
-      console.log('[Init] 背景數據載入完成');
-    }).catch(function(e){
-      console.warn('Background init load failed:', e.message);
+  // 1. 啟動 IndexedDB 初始化（背景執行，不阻塞畫面）
+  IDB.init().then(function(){
+    console.log('[Init] IndexedDB 背景初始化完成');
+    // IndexedDB 就緒後，嘗試從快取顯示玩家預覽
+    return IDB.get('summary_hayden', 86400000*7);
+  }).then(function(cachedHayden){
+    return IDB.get('summary_celine', 86400000*7).then(function(cachedCeline){
+      if(cachedHayden || cachedCeline){
+        updatePlayerPreviews(cachedHayden || {wordKnown:0}, cachedCeline || {wordKnown:0});
+        console.log('[Init] 已從快取顯示預覽');
+      }
     });
+  }).catch(function(e){
+    console.warn('[Init] IndexedDB 相關操作失敗:', e);
+  });
 
-    // 5. 背景載入字庫
-    Promise.all([
-      loadWordLibrary(),
-      loadPhraseLibrary(),
-      loadSentenceLibrary()
-    ]).then(function(){
-      console.log('[Init] 字庫背景載入完成');
-    }).catch(function(e){
-      console.warn('Background library load failed:', e.message);
-    });
+  // 2. 立即顯示畫面（0ms延遲）
+  setBodyScene('scene-player');
+  showPage('page-player');
+  hideLoading();
+  console.log('[Init] 畫面已顯示');
 
-    // 6. 嘗試同步任何待上傳的記錄
-    SyncEngine.syncAll();
+  // 3. 背景並行載入核心數據（不阻塞畫面）
+  Promise.all([
+    loadParentPin(),
+    getPlayerSummary('hayden'),
+    getPlayerSummary('celine')
+  ]).then(function([pin, hSum, cSum]){
+    PARENT_PIN = pin;
+    updatePlayerPreviews(hSum, cSum);
+    IDB.set('summary_hayden', hSum);
+    IDB.set('summary_celine', cSum);
+    console.log('[Init] 背景數據載入完成');
+  }).catch(function(e){
+    console.warn('Background init load failed:', e.message);
+  });
 
-  }catch(e){
-    console.error('[Init] 初始化出錯:', e);
-    // 即使出錯也要顯示畫面，讓用戶能操作
-    setBodyScene('scene-player');
-    showPage('page-player');
-    document.getElementById('hayden-preview').textContent = '開始第一次冒險！';
-    document.getElementById('celine-preview').textContent = '開始第一次冒險！';
-  }finally{
-    hideLoading();
-    isInitRunning = false;
-    console.log('[Init] 初始化結束');
-  }
+  // 4. 背景載入字庫
+  Promise.all([
+    loadWordLibrary(),
+    loadPhraseLibrary(),
+    loadSentenceLibrary()
+  ]).then(function(){
+    console.log('[Init] 字庫背景載入完成');
+  }).catch(function(e){
+    console.warn('Background library load failed:', e.message);
+  });
+
+  // 5. 嘗試同步任何待上傳的記錄
+  SyncEngine.syncAll();
+
+  isInitRunning = false;
+  console.log('[Init] 初始化結束');
 }
 
 function updatePlayerPreviews(hSum,cSum){
