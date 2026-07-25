@@ -1506,17 +1506,20 @@ async function init(){
   startLoadingTimer();
 
   try{
-    await Promise.all([
+    // 並行載入，並正確取得 PIN
+    var results = await Promise.all([
       loadParentPin(),
       loadWordLibrary(),
       loadPhraseLibrary(),
       loadSentenceLibrary()
     ]);
+    PARENT_PIN = results[0] || '1234';   // 重要：一定要賦值給全域變數
     hideLoading();
   }catch(e){
     console.error('Init error:',e);
+    // 即使失敗都盡量給一個預設 PIN，避免家長完全入唔到
+    if(!PARENT_PIN) PARENT_PIN = '1234';
     hideLoading();
-    // 即使失敗都唔鎖死畫面，之後選角色時再試
   }finally{
     isInitRunning=false;
     clearLoadingTimers();
