@@ -4,7 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HAYDEN AND CELINE 城市大冒險</title>
-<!-- Optimized 2026-07-25: Persistent Cache + LocalStorage + Fast First Paint for iPad A16 -->
+<!-- 
+  HAYDEN & CELINE 城市大冒險
+  Optimized + Structured + Slimmed 2026-07-26
+  - Persistent Cache + LocalStorage (fast first paint for iPad A16)
+  - Clear section structure for future AI maintenance
+  - Deduplicated library load logic (shared helper)
+  - Ready for English / Putonghua expansion
+-->
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -1007,6 +1014,38 @@ body.scene-parent { background: linear-gradient(135deg, #e8eaf6, #e3f2fd, #e8f5e
 </div>
 
 <script type="module">
+/**
+ * ============================================================
+ * HAYDEN & CELINE 城市大冒險 - 程式結構說明 (方便未來維護)
+ * ============================================================
+ * 1. 全域狀態與設定
+ * 2. 字庫 / 詞語 / 句子 載入與管理
+ * 3. 玩家統計與結果儲存
+ * 4. 數學相關
+ * 5. 遊戲紀錄 Session
+ * 6. 任務系統
+ * 7. 智能選題
+ * 8. 數學題目產生器
+ * 9. 初始化與玩家選擇
+ * 10. 大廳 (Hub)
+ * 11. 認字 / 認詞 卡片遊戲
+ * 12. 認句遊戲
+ * 13. 數學遊戲
+ * 14. 結束遊戲與報告
+ * 15. 頁面導航
+ * 16. 家長 PIN 與後台入口
+ * 17. 家長後台
+ * 18. 特效與音效
+ * 19. 程式啟動
+ *
+ * 未來加新科目（英語 / 普通話）建議：
+ * - 在 GAME_CATALOG 新增項目
+ * - 新增對應字庫與 cache key
+ * - 複製最接近的遊戲流程再微調
+ * - 統計與任務系統可沿用現有 player 結構
+ * ============================================================
+ */
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
 import { 
   initializeFirestore, 
@@ -1053,28 +1092,65 @@ function resetLoadingUI(){
 }
 window.retryInit=function(){if(isInitRunning)return;resetLoadingUI();showLoading('重新連接中...','正在重試...');init();};
 
-// ====== STATE ======
+// ============================================================
+// 1. 全域狀態與設定 (Global State & Config)
+// ============================================================
+
 // LocalStorage 快取設定（12小時）
 var WORD_CACHE_KEY = 'hc_wordLib_v2';
 var PHRASE_CACHE_KEY = 'hc_phraseLib_v2';
 var SENTENCE_CACHE_KEY = 'hc_sentenceLib_v2';
 var CACHE_TTL = 1000 * 60 * 60 * 12;
 
-var currentPlayer='',currentGameType='chinese';
-var allWords=[],fullWordLibrary=[],fullPhraseLibrary=[],fullSentenceLibrary=[];
-var wordStatsMap={},phraseStatsMap={},sentenceStatsMap={};
-var knownWords=[],undoStack=[],collectedItems=[];
-var currentSceneIndex=0,lastMilestone=-1,audioCtx=null,sessionStartTime=null,PARENT_PIN='';
-var currentSentences=[],currentSentIdx=0,sentenceResults=[],isSpeaking=false;
-var weeklyPlan={hayden:{},celine:{}},tempTasks={hayden:[],celine:[]},doneTasks={hayden:[],celine:[]};
-var planPlayer='hayden';
+// 當前遊戲狀態
+var currentPlayer = '';
+var currentGameType = 'chinese';   // chinese | phrase | sentence | math | (未來 english)
+var PARENT_PIN = '';
 
-// Math state
-var mathQuestions=[],mathCurrentIdx=0,mathResults=[],mathSessionStart=0;
-var mathCurrentInput='',mathIsAnswered=false,mathIsRetry=false,mathFirstAnswer=null;
-var mathWrongPool={hayden:[],celine:[]};
-var mathSettings={hayden:{},celine:{}};
-var mathSettingsPlayer='hayden',mathWrongPlayer='hayden',mathWrongTab='wrong';
+// 字庫資料（全域共用）
+var fullWordLibrary = [];
+var fullPhraseLibrary = [];
+var fullSentenceLibrary = [];
+var wordStatsMap = {};
+var phraseStatsMap = {};
+var sentenceStatsMap = {};
+
+// 認字/認詞遊戲進行中狀態
+var allWords = [];
+var knownWords = [];
+var undoStack = [];
+var collectedItems = [];
+var currentSceneIndex = 0;
+var lastMilestone = -1;
+var sessionStartTime = null;
+var audioCtx = null;
+
+// 認句遊戲狀態
+var currentSentences = [];
+var currentSentIdx = 0;
+var sentenceResults = [];
+var isSpeaking = false;
+
+// 任務系統
+var weeklyPlan = {hayden:{}, celine:{}};
+var tempTasks = {hayden:[], celine:[]};
+var doneTasks = {hayden:[], celine:[]};
+var planPlayer = 'hayden';
+
+// 數學遊戲狀態
+var mathQuestions = [];
+var mathCurrentIdx = 0;
+var mathResults = [];
+var mathSessionStart = 0;
+var mathCurrentInput = '';
+var mathIsAnswered = false;
+var mathIsRetry = false;
+var mathFirstAnswer = null;
+var mathWrongPool = {hayden:[], celine:[]};
+var mathSettings = {hayden:{}, celine:{}};
+var mathSettingsPlayer = 'hayden';
+var mathWrongPlayer = 'hayden';
+var mathWrongTab = 'wrong';
 
 var DAY_KEYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
 var DAY_EN=['週日','週一','週二','週三','週四','週五','週六'];
@@ -1204,91 +1280,85 @@ function buildSkyline(){var w=[30,18,40,15,35,20,45,22,28,50,16,38,25,42,20,30,1
 // ====== FIREBASE: PIN ======
 async function loadParentPin(){try{updateLoadingSub('讀取設定...');var snap=await withTimeout(getDoc(doc(db,'settings','parentPin')),10000,'pin');if(snap.exists())return snap.data().pin;await setDoc(doc(db,'settings','parentPin'),{pin:'1234',createdAt:serverTimestamp()});return'1234';}catch(e){console.warn(e.message);return'1234';}}
 
-// ====== FIREBASE: 字庫 ======
-async function loadWordLibrary(){
-  try {
-    var raw = localStorage.getItem(WORD_CACHE_KEY);
-    if (raw) {
-      var parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.data) && (Date.now() - parsed.ts < CACHE_TTL)) {
-        fullWordLibrary = parsed.data;
-        return fullWordLibrary;
-      }
-    }
-  } catch (e) {}
-  try {
-    updateLoadingSub('讀取單字庫...');
-    var snap = await withTimeout(getDocs(collection(db,'wordLibrary')),10000,'wLib');
-    fullWordLibrary = [];
-    snap.forEach(function(d){ fullWordLibrary.push(Object.assign({id:d.id},d.data())); });
-    try {
-      localStorage.setItem(WORD_CACHE_KEY, JSON.stringify({ data: fullWordLibrary, ts: Date.now() }));
-    } catch(e) {}
-    return fullWordLibrary;
-  } catch(e) {
-    console.warn(e.message);
-    return fullWordLibrary || [];
-  }
-}
-async function addWordToLibrary(word,cat){if(fullWordLibrary.find(function(w){return w.word===word;}))return false;await addDoc(collection(db,'wordLibrary'),{word:word,category:cat||'一般',addedDate:serverTimestamp()});return true;}
-async function deleteWordFromLibrary(docId){await deleteDoc(doc(db,'wordLibrary',docId));}
-async function loadPhraseLibrary(){
-  try {
-    var raw = localStorage.getItem(PHRASE_CACHE_KEY);
-    if (raw) {
-      var parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.data) && (Date.now() - parsed.ts < CACHE_TTL)) {
-        fullPhraseLibrary = parsed.data;
-        return fullPhraseLibrary;
-      }
-    }
-  } catch (e) {}
-  try {
-    updateLoadingSub('讀取詞語庫...');
-    var snap = await withTimeout(getDocs(collection(db,'phraseLibrary')),10000,'pLib');
-    fullPhraseLibrary = [];
-    snap.forEach(function(d){ fullPhraseLibrary.push(Object.assign({id:d.id},d.data())); });
-    try {
-      localStorage.setItem(PHRASE_CACHE_KEY, JSON.stringify({ data: fullPhraseLibrary, ts: Date.now() }));
-    } catch(e) {}
-    return fullPhraseLibrary;
-  } catch(e) {
-    console.warn(e.message);
-    return fullPhraseLibrary || [];
-  }
-}
-async function addPhraseToLibrary(phrase,cat){if(fullPhraseLibrary.find(function(p){return p.word===phrase;}))return false;await addDoc(collection(db,'phraseLibrary'),{word:phrase,category:cat||'一般',addedDate:serverTimestamp()});return true;}
-async function deletePhraseFromLibrary(docId){await deleteDoc(doc(db,'phraseLibrary',docId));}
-async function loadSentenceLibrary(){
-  try {
-    var raw = localStorage.getItem(SENTENCE_CACHE_KEY);
-    if (raw) {
-      var parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.data) && (Date.now() - parsed.ts < CACHE_TTL)) {
-        fullSentenceLibrary = parsed.data;
-        return fullSentenceLibrary;
-      }
-    }
-  } catch (e) {}
-  try {
-    updateLoadingSub('讀取句子庫...');
-    var snap = await withTimeout(getDocs(collection(db,'sentenceLibrary')),10000,'sLib');
-    fullSentenceLibrary = [];
-    snap.forEach(function(d){ fullSentenceLibrary.push(Object.assign({id:d.id},d.data())); });
-    fullSentenceLibrary.sort(function(a,b){return(a.order||0)-(b.order||0);});
-    try {
-      localStorage.setItem(SENTENCE_CACHE_KEY, JSON.stringify({ data: fullSentenceLibrary, ts: Date.now() }));
-    } catch(e) {}
-    return fullSentenceLibrary;
-  } catch(e) {
-    console.warn(e.message);
-    return fullSentenceLibrary || [];
-  }
-}
-async function addSentenceToLibrary(sentence){if(fullSentenceLibrary.find(function(s){return s.sentence===sentence;}))return false;await addDoc(collection(db,'sentenceLibrary'),{sentence:sentence,order:fullSentenceLibrary.length,addedDate:serverTimestamp()});return true;}
-async function deleteSentenceFromLibrary(docId){await deleteDoc(doc(db,'sentenceLibrary',docId));}
+// ============================================================
+// 2. 字庫 / 詞語 / 句子 載入與管理 (Libraries)
+// ============================================================
 
-// ====== FIREBASE: 字詞句統計 ======
+// --- 單字庫 ---
+// --- 通用字庫載入 Helper（減少重複）---
+async function loadLibraryFromCacheOrFirestore(cacheKey, collectionName, loadingMsg, sortFn) {
+  // 1. 先試 LocalStorage
+  try {
+    var raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.data) && (Date.now() - parsed.ts < CACHE_TTL)) {
+        return parsed.data;
+      }
+    }
+  } catch (e) {}
+
+  // 2. 從 Firestore 拉
+  try {
+    if (loadingMsg) updateLoadingSub(loadingMsg);
+    var snap = await withTimeout(getDocs(collection(db, collectionName)), 10000, collectionName);
+    var list = [];
+    snap.forEach(function(d) {
+      list.push(Object.assign({ id: d.id }, d.data()));
+    });
+    if (typeof sortFn === 'function') list = sortFn(list);
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ data: list, ts: Date.now() }));
+    } catch (e) {}
+    return list;
+  } catch (e) {
+    console.warn(collectionName + ' load error:', e.message);
+    return [];
+  }
+}
+
+async function loadWordLibrary() {
+  fullWordLibrary = await loadLibraryFromCacheOrFirestore(WORD_CACHE_KEY, 'wordLibrary', '讀取單字庫...');
+  return fullWordLibrary;
+}
+async function addWordToLibrary(word, cat) {
+  if (fullWordLibrary.find(function(w) { return w.word === word; })) return false;
+  await addDoc(collection(db, 'wordLibrary'), { word: word, category: cat || '一般', addedDate: serverTimestamp() });
+  return true;
+}
+async function deleteWordFromLibrary(docId) {
+  await deleteDoc(doc(db, 'wordLibrary', docId));
+}
+
+async function loadPhraseLibrary() {
+  fullPhraseLibrary = await loadLibraryFromCacheOrFirestore(PHRASE_CACHE_KEY, 'phraseLibrary', '讀取詞語庫...');
+  return fullPhraseLibrary;
+}
+async function addPhraseToLibrary(phrase, cat) {
+  if (fullPhraseLibrary.find(function(p) { return p.word === phrase; })) return false;
+  await addDoc(collection(db, 'phraseLibrary'), { word: phrase, category: cat || '一般', addedDate: serverTimestamp() });
+  return true;
+}
+async function deletePhraseFromLibrary(docId) {
+  await deleteDoc(doc(db, 'phraseLibrary', docId));
+}
+
+async function loadSentenceLibrary() {
+  fullSentenceLibrary = await loadLibraryFromCacheOrFirestore(
+    SENTENCE_CACHE_KEY, 'sentenceLibrary', '讀取句子庫...',
+    function(list) { return list.sort(function(a, b) { return (a.order || 0) - (b.order || 0); }); }
+  );
+  return fullSentenceLibrary;
+}
+async function addSentenceToLibrary(sentence) {
+  if (fullSentenceLibrary.find(function(s) { return s.sentence === sentence; })) return false;
+  await addDoc(collection(db, 'sentenceLibrary'), { sentence: sentence, addedDate: serverTimestamp() });
+  return true;
+}
+async function deleteSentenceFromLibrary(docId) {
+  await deleteDoc(doc(db, 'sentenceLibrary', docId));
+}
+
 async function loadPlayerStats(player){try{updateLoadingSub('讀取進度（'+charNames[player]+'）...');var snap=await withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'wS');wordStatsMap={};snap.forEach(function(d){wordStatsMap[d.data().word]=d.data();});return wordStatsMap;}catch(e){console.warn(e.message);return wordStatsMap;}}
 async function loadPhraseStats(player){try{updateLoadingSub('讀取詞語進度...');var snap=await withTimeout(getDocs(collection(db,'players',player,'phraseStats')),10000,'pS');phraseStatsMap={};snap.forEach(function(d){phraseStatsMap[d.data().word]=d.data();});return phraseStatsMap;}catch(e){console.warn(e.message);return phraseStatsMap;}}
 async function loadSentenceStats(player){try{updateLoadingSub('讀取句子進度...');var snap=await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'sS');sentenceStatsMap={};snap.forEach(function(d){sentenceStatsMap[d.id]=d.data();});return sentenceStatsMap;}catch(e){console.warn(e.message);return sentenceStatsMap;}}
@@ -1296,7 +1366,9 @@ async function saveWordResult(player,word,success){try{var ex=wordStatsMap[word]
 async function savePhraseResult(player,phrase,success){try{var ex=phraseStatsMap[phrase],updated={word:phrase,shown:(ex?ex.shown:0)+1,success:(ex?ex.success:0)+(success?1:0),fail:(ex?ex.fail:0)+(success?0:1),lastSeen:serverTimestamp()};await setDoc(doc(db,'players',player,'phraseStats',phrase),updated);phraseStatsMap[phrase]=updated;}catch(e){console.warn(e.message);}}
 async function saveSentenceResult(player,sentId,sentText,success){try{var ex=sentenceStatsMap[sentId],updated={sentence:sentText,shown:(ex?ex.shown:0)+1,success:(ex?ex.success:0)+(success?1:0),fail:(ex?ex.fail:0)+(success?0:1),lastSeen:serverTimestamp()};await setDoc(doc(db,'players',player,'sentenceStats',sentId),updated);sentenceStatsMap[sentId]=updated;}catch(e){console.warn(e.message);}}
 
-// ====== FIREBASE: 數學設定 ======
+// ============================================================
+// 4. 數學相關 (Math Settings & Wrong Pool)
+// ============================================================
 async function loadMathSettings(player){
   try{
     var snap=await withTimeout(getDoc(doc(db,'mathSettings',player)),10000,'mathSet');
@@ -1377,7 +1449,9 @@ async function saveMathChapterStat(player,chapter,firstCorrect,secondCorrect,wro
   }catch(e){console.warn(e.message);}
 }
 
-// ====== FIREBASE: SESSION ======
+// ============================================================
+// 5. 遊戲紀錄 Session
+// ============================================================
 async function saveSession(player,played,known,unknownArr,gameType){
   try{await addDoc(collection(db,'players',player,'sessions'),{date:serverTimestamp(),played:played,known:known,unknown:unknownArr.length,percentage:Math.round(known/played*100),durationMs:Date.now()-sessionStartTime,gameType:gameType});}catch(e){console.warn(e.message);}
 }
@@ -1388,7 +1462,7 @@ async function saveMathSession(player,total,firstCorrect,secondCorrect,wrong){
   }catch(e){console.warn(e.message);}
 }
 
-// ====== FIREBASE: SUMMARY ======
+// --- 玩家總結 ---
 async function getPlayerSummary(player){
   try{
     var wSnap=await withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'sw');
@@ -1404,7 +1478,9 @@ async function getPlayerSummary(player){
   }catch(e){console.warn(e.message);return{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0};}
 }
 
-// ====== FIREBASE: TASKS ======
+// ============================================================
+// 6. 任務系統 (Weekly / Temp Tasks)
+// ============================================================
 async function loadTasksForPlayer(player){
   try{
     updateLoadingSub('讀取任務（'+charNames[player]+'）...');
@@ -1420,11 +1496,15 @@ async function saveTempTasksForPlayer(player,tasks){await setDoc(doc(db,'tasks',
 async function markTaskDone(player,gameId){if(!doneTasks[player])doneTasks[player]=[];if(!doneTasks[player].includes(gameId)){doneTasks[player].push(gameId);await setDoc(doc(db,'tasks',player,'daily',todayKey()),{temp:tempTasks[player]||[],done:doneTasks[player]},{merge:true});}}
 function getTodayTasks(player){var dayKey=todayDayKey(),weekly=(weeklyPlan[player]&&weeklyPlan[player][dayKey])?weeklyPlan[player][dayKey]:[],temp=tempTasks[player]||[],merged=weekly.slice();temp.forEach(function(g){if(!merged.includes(g))merged.push(g);});return merged;}
 
-// ====== SMART SELECTION ======
+// ============================================================
+// 7. 智能選題 (Smart Selection)
+// ============================================================
 function selectSmartWords(library,stats,maxCount){maxCount=maxCount||100;var now=Date.now();var scored=library.map(function(item){var w=item.word,s=stats[w],priority=0;if(!s||s.shown===0){priority=100;}else{var rate=s.success/s.shown;if(rate<0.3)priority=90;else if(rate<0.5)priority=75;else if(rate<0.7)priority=55;else if(rate<0.85)priority=35;else priority=15;if(s.lastSeen){var lastMs=s.lastSeen.toMillis?s.lastSeen.toMillis():(s.lastSeen.seconds*1000);var days=(now-lastMs)/(1000*60*60*24);if(days>30)priority+=40;else if(days>14)priority+=25;else if(days>7)priority+=15;else if(days>3)priority+=8;}}return Object.assign({},item,{priority:priority});});scored.sort(function(a,b){return b.priority-a.priority;});return shuffle(scored.slice(0,maxCount)).map(function(s){return s.word;});}
 function selectSmartSentences(library,stats,count){count=count||15;var now=Date.now();var scored=library.map(function(item){var s=stats[item.id],priority=0;if(!s||s.shown===0){priority=100;}else{var rate=s.success/s.shown;if(rate<0.3)priority=90;else if(rate<0.5)priority=75;else if(rate<0.7)priority=55;else if(rate<0.85)priority=35;else priority=15;if(s.lastSeen){var lastMs=s.lastSeen.toMillis?s.lastSeen.toMillis():(s.lastSeen.seconds*1000);var days=(now-lastMs)/(1000*60*60*24);if(days>30)priority+=40;else if(days>14)priority+=25;else if(days>7)priority+=15;else if(days>3)priority+=8;}}return Object.assign({},item,{priority:priority});});scored.sort(function(a,b){return b.priority-a.priority;});return shuffle(scored.slice(0,Math.min(count,library.length)));}
 
-// ====== MATH QUESTION GENERATOR ======
+// ============================================================
+// 8. 數學題目產生器
+// ============================================================
 function makeMathQuestion(chapter){
   var a,b,ans,tries=0;
   while(tries<50){
@@ -1488,7 +1568,9 @@ function buildMathQuestions(player){
   return shuffle(priorityQs).concat(shuffle(newQs));
 }
 
-// ====== INIT ======
+// ============================================================
+// 9. 初始化與玩家選擇 (Init & Player Select)
+// ============================================================
 async function init(){
   if(isInitRunning)return;isInitRunning=true;window.__APP_INITIALIZED__=true;
 
@@ -1531,7 +1613,7 @@ function updatePlayerPreviews(hSum,cSum){
   document.getElementById('celine-preview').textContent=cSum.wordKnown>0?'認識 '+cSum.wordKnown+'字 '+cSum.phraseKnown+'詞 '+cSum.sentenceKnown+'句 ⭐':'開始第一次冒險！';
 }
 
-// ====== SELECT PLAYER ======
+// --- 選擇玩家 ---
 window.selectPlayer=async function(player){
   currentPlayer=player;showLoading('準備冒險裝備...','');startLoadingTimer();
   try{
@@ -1542,7 +1624,9 @@ window.selectPlayer=async function(player){
   }catch(e){console.error(e);hideLoading();renderHub(player,{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});}
 };
 
-// ====== RENDER HUB ======
+// ============================================================
+// 10. 大廳 (Hub)
+// ============================================================
 function renderHub(player,summary){
   setBodyScene('scene-hub');
   document.getElementById('hub-player-emoji').textContent=charEmoji[player];
@@ -1575,7 +1659,7 @@ function renderHub(player,summary){
   document.getElementById('hub-games-grid').innerHTML=cardsHtml;showPage('page-hub');
 }
 
-// ====== START GAME FROM HUB ======
+// --- 從大廳開始遊戲 ---
 window.startGameFromHub=function(gameId){
   currentGameType=gameId;
   if(gameId==='chinese'){if(fullWordLibrary.length===0){alert('單字庫還是空的！');return;}allWords=selectSmartWords(fullWordLibrary,wordStatsMap,100);startCardGame();}
@@ -1584,7 +1668,9 @@ window.startGameFromHub=function(gameId){
   else if(gameId==='math'){startMathGame();}
 };
 
-// ====== CARD GAME ======
+// ============================================================
+// 11. 認字 / 認詞 卡片遊戲
+// ============================================================
 function startCardGame(){
   knownWords=[];undoStack=[];collectedItems=[];currentSceneIndex=0;lastMilestone=-1;sessionStartTime=Date.now();
   document.getElementById('route-map').style.display='flex';document.getElementById('sentence-route-map').style.display='none';
@@ -1637,7 +1723,9 @@ function showMilestonePopup(scene){var popup=document.createElement('div');popup
 function showAllCardsDoneCelebration(){playCelebrationSound();createConfetti();setDialogue(pickRandom(dialogues.castle));var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉🏰🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">城市英雄 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:8px;">所有文字都找回來了！</p><p style="font-size:18px;color:#888;margin-bottom:20px;">城市恢復正常了！你真厲害！🏙️✨</p><button class="btn btn-again" onclick="this.closest(\'.celebration\').remove();finishCardGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
 function updateProgress(){var pct=allWords.length>0?(knownWords.length/allWords.length*100):0;document.getElementById('progress-fill').style.width=pct+'%';document.getElementById('progress-text').textContent=knownWords.length+' / '+allWords.length;}
 
-// ====== SENTENCE GAME ======
+// ============================================================
+// 12. 認句遊戲
+// ============================================================
 function startSentenceGame(){
   currentSentIdx=0;sentenceResults=[];isSpeaking=false;collectedItems=[];sessionStartTime=Date.now();
   document.getElementById('route-map').style.display='none';document.getElementById('sentence-route-map').style.display='flex';
@@ -1674,7 +1762,9 @@ window.answerSentence=function(known){
 };
 function showAllSentenceDoneCelebration(){playCelebrationSound();createConfetti();setDialogue('你認識全部句子！太厲害！');var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉📖🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">句子大師 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:20px;">所有句子都認識！📖✨</p><button class="btn btn-again" onclick="this.closest(\'.celebration\').remove();finishSentenceGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
 
-// ====== MATH GAME ======
+// ============================================================
+// 13. 數學遊戲
+// ============================================================
 function startMathGame(){
   mathQuestions=buildMathQuestions(currentPlayer);
   if(mathQuestions.length===0){alert('請家長先到「數學設定」設定題目！');return;}
@@ -1814,7 +1904,9 @@ window.replayMathGame=function(){startMathGame();};
 /* ===== END OF PART 1 - 請直接貼上 PART 2 ===== */
   /* ===== START OF PART 2 - 直接接在 PART 1 後面 ===== */
 
-// ====== CONFIRM FINISH (Card/Sentence) ======
+// ============================================================
+// 14. 結束遊戲與報告
+// ============================================================
 window.showConfirmFinish=function(){
   if(currentGameType==='sentence'){
     if(window.speechSynthesis)window.speechSynthesis.cancel();isSpeaking=false;
@@ -1832,7 +1924,7 @@ window.showConfirmFinish=function(){
   }
 };
 
-// ====== FINISH CARD GAME ======
+// --- 結束認字/認詞 ---
 window.finishCardGame=async function(){
   document.querySelectorAll('.celebration,.milestone-popup').forEach(function(e){e.remove();});
   showLoading('儲存冒險記錄...','');
@@ -1855,7 +1947,7 @@ window.finishCardGame=async function(){
   renderReport(knownWords,unknownList,summary);
 };
 
-// ====== FINISH SENTENCE GAME ======
+// --- 結束認句 ---
 window.finishSentenceGame=async function(){
   document.querySelectorAll('.celebration,.milestone-popup').forEach(function(e){e.remove();});
   if(window.speechSynthesis)window.speechSynthesis.cancel();isSpeaking=false;
@@ -1876,7 +1968,7 @@ window.finishSentenceGame=async function(){
 };
 window.speakSentenceFromReport=function(idx){if(window.__sentenceResults&&window.__sentenceResults[idx])speakText(window.__sentenceResults[idx].sentence,0.7,null);};
 
-// ====== RENDER REPORT (Card/Sentence) ======
+// --- 顯示報告 ---
 function renderReport(knownList,unknownList,summary){
   setBodyScene('scene-report');
   var isSentence=currentGameType==='sentence',isPhrase=currentGameType==='phrase';
@@ -1928,7 +2020,9 @@ function renderReport(knownList,unknownList,summary){
   if(pct>=80)setTimeout(createConfetti,500);
 }
 
-// ====== NAVIGATION ======
+// ============================================================
+// 15. 頁面導航
+// ============================================================
 window.replayGame=async function(){
   showLoading('重新準備...','');startLoadingTimer();
   try{
@@ -1976,7 +2070,9 @@ window.backToPlayerSelect=async function(){
   hideLoading();setBodyScene('scene-player');showPage('page-player');
 };
 
-// ====== PIN ======
+// ============================================================
+// 16. 家長 PIN 與後台入口
+// ============================================================
 window.showPinEntry=function(){
   var overlay=document.createElement('div');overlay.className='celebration';overlay.id='pin-overlay';
   overlay.innerHTML='<div class="pin-container"><h2>🔒 家長登入</h2><input type="password" class="pin-input" id="pin-input-field" placeholder="••••" maxlength="20"/><div class="pin-error" id="pin-error"></div><div style="margin-top:15px;display:flex;gap:10px;justify-content:center;"><button class="btn btn-parent btn-sm" onclick="checkPin()">✅ 確認</button><button class="btn btn-back btn-sm" onclick="document.getElementById(\'pin-overlay\').remove()">取消</button></div></div>';
@@ -2010,7 +2106,9 @@ async function openParentDashboard(){
   }
 }
 
-// ====== PARENT TABS ======
+// ============================================================
+// 17. 家長後台 (Parent Dashboard)
+// ============================================================
 window.switchTab=function(tabId,btn){
   document.querySelectorAll('.tab-content').forEach(function(t){t.classList.remove('active');});
   document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
@@ -2022,7 +2120,7 @@ window.switchLibTab=function(tabId,btn,activeClass){
   document.getElementById(tabId).classList.add('active');if(btn){btn.classList.add('active',activeClass);}
 };
 
-// ====== PLAN ======
+// --- 任務計劃 ---
 window.selectPlanPlayer=function(player){
   planPlayer=player;
   document.getElementById('plan-btn-hayden').className='plan-player-tab'+(player==='hayden'?' active hayden':'');
@@ -2087,7 +2185,7 @@ function renderCompletionStatus(){
   });
 }
 
-// ====== WORD LIBRARY ======
+// --- 字庫管理 UI ---
 function renderWordChips(){
   var container=document.getElementById('word-chips-display');document.getElementById('total-word-count').textContent=fullWordLibrary.length;
   if(fullWordLibrary.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;">字庫為空，請新增字詞</p>';return;}
@@ -2101,7 +2199,7 @@ window.addWordsToLibrary=async function(){
   localStorage.removeItem(WORD_CACHE_KEY);await loadWordLibrary();hideLoading();document.getElementById('newWordsInput').value='';renderWordChips();alert('成功新增 '+added+' 個字，'+(words.length-added)+' 個字已存在');
 };
 
-// ====== PHRASE LIBRARY ======
+// --- 詞語庫管理 UI ---
 function renderPhraseChips(){
   var container=document.getElementById('phrase-chips-display');document.getElementById('total-phrase-count').textContent=fullPhraseLibrary.length;
   if(fullPhraseLibrary.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;">詞語庫為空，請新增詞語</p>';return;}
@@ -2115,7 +2213,7 @@ window.addPhrasesToLibrary=async function(){
   localStorage.removeItem(PHRASE_CACHE_KEY);await loadPhraseLibrary();hideLoading();document.getElementById('newPhrasesInput').value='';renderPhraseChips();alert('成功新增 '+added+' 個詞語，'+(phrases.length-added)+' 個詞語已存在');
 };
 
-// ====== SENTENCE LIBRARY ======
+// --- 句子庫管理 UI ---
 function renderSentenceList(){
   var container=document.getElementById('sentence-list-display');document.getElementById('total-sentence-count').textContent=fullSentenceLibrary.length;
   if(fullSentenceLibrary.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;padding:10px;">句子庫為空，請新增句子</p>';return;}
@@ -2132,7 +2230,7 @@ window.addSentencesToLibrary=async function(){
   localStorage.removeItem(SENTENCE_CACHE_KEY);await loadSentenceLibrary();hideLoading();document.getElementById('newSentencesInput').value='';renderSentenceList();alert('成功新增 '+added+' 個句子，'+(sentences.length-added)+' 個句子已存在');
 };
 
-// ====== MATH SETTINGS UI ======
+// --- 數學設定 UI ---
 window.selectMathSettingsPlayer=function(player){
   mathSettingsPlayer=player;
   document.getElementById('math-plan-btn-hayden').className='math-settings-player-tab'+(player==='hayden'?' active hayden':'');
@@ -2165,7 +2263,7 @@ window.saveMathSettings=async function(){
   var s=document.getElementById('math-save-status');s.textContent='✅ '+charNames[player]+' 的數學設定已儲存！';setTimeout(function(){s.textContent='';},3000);
 };
 
-// ====== MATH WRONG LIST ======
+// --- 錯題記錄 ---
 window.selectMathWrongPlayer=function(player){
   mathWrongPlayer=player;
   document.getElementById('math-wrong-btn-hayden').className='math-settings-player-tab'+(player==='hayden'?' active hayden':'');
@@ -2205,7 +2303,7 @@ async function renderMathWrongList(){
   }catch(e){container.innerHTML='<p class="math-empty-notice">讀取失敗，請重試</p>';}
 }
 
-// ====== PARENT STATS ======
+// --- 學習報告統計 ---
 async function loadParentStats(){
   try{
     updateLoadingSub('讀取統計數據...');
@@ -2289,7 +2387,7 @@ async function loadSessions(){
   }catch(e){container.innerHTML='<p style="color:#bbb;font-size:14px;">載入失敗，請重試</p>';}
 }
 
-// ====== RESET ======
+// --- 重設數據 ---
 async function deleteSubCollection(player,subCol){
   var snap=await getDocs(collection(db,'players',player,subCol));var batch=writeBatch(db);
   snap.forEach(function(d){batch.delete(d.ref);});if(!snap.empty)await batch.commit();
@@ -2333,7 +2431,9 @@ window.resetEverything=async function(){
   }catch(e){hideLoading();document.getElementById('reset-status').textContent='清除失敗：'+e.message;}
 };
 
-// ====== EFFECTS ======
+// ============================================================
+// 18. 特效與音效 (Effects)
+// ============================================================
 function createSparkles(cx,cy){
   for(var i=0;i<10;i++){
     var el=document.createElement('div'),angle=(Math.PI*2*i)/10,dist=40+Math.random()*60;el.className='sparkle';
@@ -2368,7 +2468,9 @@ function createConfetti(){
   }
 }
 
-// ====== START ======
+// ============================================================
+// 19. 程式啟動
+// ============================================================
 init();
 </script>
 </body>
