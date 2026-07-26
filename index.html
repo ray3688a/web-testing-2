@@ -193,41 +193,6 @@ body.scene-parent { background: linear-gradient(135deg, #e8eaf6, #e3f2fd, #e8f5e
 .btn-sentence-unknown:hover:not(:disabled) { transform:translateY(-3px); box-shadow:0 8px 25px rgba(255,107,107,0.4); }
 .btn-sentence-known:disabled, .btn-sentence-unknown:disabled { opacity:0.45; cursor:not-allowed; transform:none !important; }
 
-/* ====== ARTICLE GAME ====== */
-#article-game-area { display:none; flex-direction:column; align-items:center; width:100%; max-width:780px; padding:0 10px; margin-bottom:30px; }
-.article-progress-wrapper { text-align:center; margin:8px 0; }
-.article-progress-text { font-size:20px; font-weight:bold; color:#333; background:rgba(255,255,255,0.85); border-radius:20px; padding:8px 24px; display:inline-block; box-shadow:0 3px 10px rgba(0,0,0,0.08); }
-.article-title { font-size:26px; font-weight:bold; color:#333; text-align:center; margin:12px 0 8px; padding:0 10px; }
-.article-grade-badge { display:inline-block; background:linear-gradient(135deg,#5c6bc0,#3949ab); color:white; font-size:13px; font-weight:bold; padding:4px 14px; border-radius:12px; margin-bottom:10px; }
-.article-content-card { background:white; border-radius:24px; padding:24px 28px; font-size:20px; color:#333; text-align:left; box-shadow:0 12px 35px rgba(0,0,0,0.12); margin:10px 0; line-height:1.85; max-height:42vh; overflow-y:auto; width:100%; border-left:8px solid #5c6bc0; white-space:pre-wrap; word-break:break-word; }
-.article-reading-indicator { font-size:16px; color:#5c6bc0; font-weight:bold; text-align:center; margin:8px 0; min-height:24px; animation:breathe 1.5s ease infinite; }
-.article-buttons { display:flex; gap:16px; justify-content:center; margin:16px 0; flex-wrap:wrap; }
-.btn-article-known, .btn-article-unknown { border:none; border-radius:50px; font-size:20px; font-weight:bold; font-family:inherit; padding:16px 40px; cursor:pointer; transition:all 0.3s; }
-.btn-article-known   { background:linear-gradient(135deg,#48c774,#36d1dc); color:white; }
-.btn-article-unknown { background:linear-gradient(135deg,#ff6b6b,#ffa500); color:white; }
-.btn-article-known:hover:not(:disabled)   { transform:translateY(-3px); box-shadow:0 8px 25px rgba(72,199,116,0.4); }
-.btn-article-unknown:hover:not(:disabled) { transform:translateY(-3px); box-shadow:0 8px 25px rgba(255,107,107,0.4); }
-.btn-article-known:disabled, .btn-article-unknown:disabled { opacity:0.45; cursor:not-allowed; transform:none !important; }
-.article-grade-tabs { display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; justify-content:center; }
-.article-grade-tab { padding:8px 14px; border:2px solid #e0e0e0; border-radius:14px; cursor:pointer; background:white; font-family:inherit; font-size:13px; font-weight:bold; color:#666; transition:all 0.2s; }
-.article-grade-tab.active { border-color:#5c6bc0; background:#e8eaf6; color:#283593; }
-.article-lib-item { display:flex; align-items:flex-start; gap:12px; padding:14px 16px; background:white; border-radius:12px; margin-bottom:8px; border:2px solid #e8eaf6; }
-.article-lib-item:hover { border-color:#5c6bc0; }
-.article-lib-title { flex:1; font-size:16px; font-weight:bold; color:#333; line-height:1.4; }
-.article-lib-meta { font-size:12px; color:#888; margin-top:4px; }
-.article-lib-delete { background:none; border:none; color:#ff6b6b; cursor:pointer; font-size:18px; padding:4px 8px; border-radius:8px; flex-shrink:0; }
-.article-settings-box { background:linear-gradient(135deg,#e8eaf6,#e3f2fd); border-radius:16px; padding:16px 18px; margin-bottom:18px; border:2px solid #c5cae9; }
-.article-settings-row { display:flex; align-items:center; gap:12px; margin-bottom:10px; flex-wrap:wrap; }
-.article-settings-row label { font-size:14px; font-weight:bold; color:#3949ab; min-width:90px; }
-.article-count-input { width:70px; padding:8px; font-size:16px; text-align:center; border:2px solid #c5cae9; border-radius:10px; font-family:inherit; font-weight:bold; }
-.game-card.article-card { background:linear-gradient(135deg,#5c6bc0,#3949ab); box-shadow:0 8px 25px rgba(92,107,192,0.3); }
-.game-card.article-card:hover { box-shadow:0 15px 35px rgba(92,107,192,0.4); }
-.game-card.article-card .game-name { color:white; }
-.game-card.article-card .game-desc { color:rgba(255,255,255,0.85); }
-.game-type-badge.article { background:linear-gradient(135deg,#5c6bc0,#3949ab); }
-.lib-tab-btn.active.article-lib { border-color:#5c6bc0; background:#e8eaf6; color:#283593; }
-.session-type.article { background:#e8eaf6; color:#283593; }
-
 /* ====== MATH GAME ====== */
 #page-math { padding-top:20px; position:relative; z-index:1; }
 .math-container { background:rgba(255,255,255,0.95); border-radius:24px; padding:20px 24px; box-shadow:0 20px 60px rgba(0,0,0,0.1); max-width:600px; width:100%; }
@@ -718,19 +683,6 @@ body.scene-parent { background: linear-gradient(135deg, #e8eaf6, #e3f2fd, #e8f5e
       <button class="btn-sentence-unknown" onclick="answerSentence(false)">❌ 唔認識</button>
     </div>
   </div>
-  <div id="article-game-area">
-    <div class="article-progress-wrapper">
-      <div class="article-progress-text" id="article-progress-text">第 1 / 3 篇</div>
-    </div>
-    <div class="article-grade-badge" id="article-grade-badge">K3</div>
-    <div class="article-title" id="article-title">標題</div>
-    <div class="article-content-card" id="article-content">文章內容...</div>
-    <div class="article-reading-indicator" id="article-reading-indicator" style="display:none;">🔊 正在朗讀...</div>
-    <div class="article-buttons">
-      <button class="btn-article-known" onclick="answerArticle(true)">✅ 認識</button>
-      <button class="btn-article-unknown" onclick="answerArticle(false)">❌ 唔認識</button>
-    </div>
-  </div>
 </div>
 
 <!-- PAGE 3: 數學遊戲 -->
@@ -907,7 +859,6 @@ body.scene-parent { background: linear-gradient(135deg, #e8eaf6, #e3f2fd, #e8f5e
         <button class="lib-tab-btn active word-lib"  id="lib-btn-word"     onclick="switchLibTab('lib-word',this,'word-lib')">🏙️ 單字庫</button>
         <button class="lib-tab-btn phrase-lib"       id="lib-btn-phrase"   onclick="switchLibTab('lib-phrase',this,'phrase-lib')">🔤 詞語庫</button>
         <button class="lib-tab-btn sentence-lib"     id="lib-btn-sentence" onclick="switchLibTab('lib-sentence',this,'sentence-lib')">📖 句子庫</button>
-        <button class="lib-tab-btn article-lib"      id="lib-btn-article"  onclick="switchLibTab('lib-article',this,'article-lib')">📰 文章庫</button>
       </div>
       <div class="lib-tab-content active" id="lib-word">
         <div class="word-add-area">
@@ -952,45 +903,6 @@ body.scene-parent { background: linear-gradient(135deg, #e8eaf6, #e3f2fd, #e8f5e
         <div class="word-library-display">
           <h3>📖 現有句子庫（<span id="total-sentence-count">0</span> 個句子）</h3>
           <div class="sentence-lib-list" id="sentence-list-display"></div>
-        </div>
-      </div>
-      <div class="lib-tab-content" id="lib-article">
-        <div class="article-settings-box">
-          <div style="font-size:15px;font-weight:bold;color:#3949ab;margin-bottom:12px;">⚙️ 文章冒險設定（每次練習篇數）</div>
-          <div class="article-settings-row">
-            <label>👦 Hayden</label>
-            <input type="number" class="article-count-input" id="article-count-hayden" value="3" min="1" max="10">
-            <span style="font-size:13px;color:#666;">篇</span>
-          </div>
-          <div class="article-settings-row">
-            <label>👧 Celine</label>
-            <input type="number" class="article-count-input" id="article-count-celine" value="3" min="1" max="10">
-            <span style="font-size:13px;color:#666;">篇</span>
-          </div>
-          <button class="btn btn-sm" style="background:linear-gradient(135deg,#5c6bc0,#3949ab);color:white;margin-top:6px;" onclick="saveArticleSettings()">💾 儲存篇數設定</button>
-          <div id="article-settings-status" style="font-size:13px;color:#388e3c;font-weight:bold;margin-top:8px;min-height:18px;"></div>
-        </div>
-        <div class="word-add-area">
-          <label>➕ 新增文章到文章庫</label>
-          <input type="text" id="newArticleTitle" placeholder="文章標題" style="width:100%;padding:12px;font-size:16px;border:2px solid #ddd;border-radius:12px;margin-bottom:10px;font-family:inherit;outline:none;">
-          <textarea id="newArticleContent" placeholder="貼上或輸入完整文章內容..." style="height:140px;"></textarea>
-          <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <select id="newArticleGrade" style="padding:8px 15px;border-radius:12px;border:2px solid #ddd;font-size:14px;font-family:inherit;">
-              <option value="K3">幼稚園 K3</option>
-              <option value="P1">小學一年級</option>
-              <option value="P2">小學二年級</option>
-              <option value="P3">小學三年級</option>
-              <option value="P4">小學四年級</option>
-              <option value="P5">小學五年級</option>
-              <option value="P6">小學六年級</option>
-            </select>
-            <button class="btn btn-sm" style="background:linear-gradient(135deg,#5c6bc0,#3949ab);color:white;font-weight:bold;" onclick="addArticleToLibrary()">➕ 加入文章庫</button>
-          </div>
-        </div>
-        <div class="word-library-display">
-          <h3>📰 現有文章庫（<span id="total-article-count">0</span> 篇）</h3>
-          <div class="article-grade-tabs" id="article-grade-tabs"></div>
-          <div class="sentence-lib-list" id="article-list-display"></div>
         </div>
       </div>
     </div>
@@ -1188,38 +1100,20 @@ window.retryInit=function(){if(isInitRunning)return;resetLoadingUI();showLoading
 var WORD_CACHE_KEY = 'hc_wordLib_v2';
 var PHRASE_CACHE_KEY = 'hc_phraseLib_v2';
 var SENTENCE_CACHE_KEY = 'hc_sentenceLib_v2';
-var ARTICLE_CACHE_KEY = 'hc_articleLib_v1';
 var CACHE_TTL = 1000 * 60 * 60 * 12;
 
 // 當前遊戲狀態
 var currentPlayer = '';
-var currentGameType = 'chinese';   // chinese | phrase | sentence | article | math
+var currentGameType = 'chinese';   // chinese | phrase | sentence | math | (未來 english)
 var PARENT_PIN = '';
 
 // 字庫資料（全域共用）
 var fullWordLibrary = [];
 var fullPhraseLibrary = [];
 var fullSentenceLibrary = [];
-var fullArticleLibrary = [];
 var wordStatsMap = {};
 var phraseStatsMap = {};
 var sentenceStatsMap = {};
-var articleStatsMap = {};
-var articleSettings = {hayden:{count:3}, celine:{count:3}};
-var currentArticles = [];
-var currentArticleIdx = 0;
-var articleResults = [];
-var currentArticleGradeTab = 'K3';
-var ARTICLE_DEFAULT_COUNT = 3;
-var ARTICLE_GRADES = [
-  {id:'K3', name:'幼稚園 K3'},
-  {id:'P1', name:'小學一年級'},
-  {id:'P2', name:'小學二年級'},
-  {id:'P3', name:'小學三年級'},
-  {id:'P4', name:'小學四年級'},
-  {id:'P5', name:'小學五年級'},
-  {id:'P6', name:'小學六年級'}
-];
 
 // 認字/認詞遊戲進行中狀態
 var allWords = [];
@@ -1265,7 +1159,6 @@ var GAME_CATALOG=[
   {id:'chinese', name:'認字冒險',icon:'🏙️',desc:'找回城市裡消失的單字！', available:true},
   {id:'phrase',  name:'認詞冒險',icon:'🔤', desc:'找回城市裡消失的詞語！', available:true},
   {id:'sentence',name:'認句冒險',icon:'📖', desc:'挑戰認識15個句子！',      available:true},
-  {id:'article', name:'文章冒險',icon:'📰', desc:'閱讀完整文章，提升閱讀力！', available:true},
   {id:'math',    name:'數學冒險',icon:'🧮', desc:'數學練習，加油！',         available:true},
   {id:'english', name:'英文冒險',icon:'🔠', desc:'即將推出！',              available:false}
 ];
@@ -1466,97 +1359,6 @@ async function deleteSentenceFromLibrary(docId) {
   await deleteDoc(doc(db, 'sentenceLibrary', docId));
 }
 
-// ===== 文章庫 =====
-async function loadArticleLibrary() {
-  fullArticleLibrary = await loadLibraryFromCacheOrFirestore(
-    ARTICLE_CACHE_KEY, 'articleLibrary', '讀取文章庫...',
-    function(list) {
-      return list.sort(function(a, b) {
-        var gOrder = {K3:0,P1:1,P2:2,P3:3,P4:4,P5:5,P6:6};
-        var ga = gOrder[a.grade] || 99, gb = gOrder[b.grade] || 99;
-        if (ga !== gb) return ga - gb;
-        return (a.title || '').localeCompare(b.title || '');
-      });
-    }
-  );
-  return fullArticleLibrary;
-}
-async function addArticleToLibrary(title, content, grade) {
-  if (!title || !content) return false;
-  if (fullArticleLibrary.find(function(a) { return a.title === title && a.grade === grade; })) return false;
-  await addDoc(collection(db, 'articleLibrary'), {
-    title: title, content: content, grade: grade || 'K3', addedDate: serverTimestamp()
-  });
-  return true;
-}
-async function deleteArticleFromLibrary(docId) {
-  await deleteDoc(doc(db, 'articleLibrary', docId));
-}
-async function loadArticleStats(player) {
-  try {
-    updateLoadingSub('讀取文章進度...');
-    var snap = await withTimeout(getDocs(collection(db, 'players', player, 'articleStats')), 10000, 'aS');
-    articleStatsMap = {};
-    snap.forEach(function(d) { articleStatsMap[d.id] = d.data(); });
-    return articleStatsMap;
-  } catch (e) { console.warn(e.message); return articleStatsMap; }
-}
-async function saveArticleResult(player, articleId, title, success) {
-  try {
-    var ex = articleStatsMap[articleId];
-    var updated = {
-      title: title,
-      shown: (ex ? ex.shown : 0) + 1,
-      success: (ex ? ex.success : 0) + (success ? 1 : 0),
-      fail: (ex ? ex.fail : 0) + (success ? 0 : 1),
-      lastSeen: serverTimestamp()
-    };
-    await setDoc(doc(db, 'players', player, 'articleStats', articleId), updated);
-    articleStatsMap[articleId] = updated;
-  } catch (e) { console.warn(e.message); }
-}
-async function loadArticleSettings(player) {
-  try {
-    var snap = await withTimeout(getDoc(doc(db, 'articleSettings', player)), 8000, 'artSet');
-    if (snap.exists()) articleSettings[player] = { count: snap.data().count || ARTICLE_DEFAULT_COUNT };
-    else articleSettings[player] = { count: ARTICLE_DEFAULT_COUNT };
-  } catch (e) {
-    console.warn(e.message);
-    articleSettings[player] = articleSettings[player] || { count: ARTICLE_DEFAULT_COUNT };
-  }
-}
-async function saveArticleSettingsForPlayer(player, count) {
-  await setDoc(doc(db, 'articleSettings', player), { count: count, updatedAt: serverTimestamp() });
-  articleSettings[player] = { count: count };
-}
-function selectSmartArticles(library, stats, count) {
-  count = count || ARTICLE_DEFAULT_COUNT;
-  var now = Date.now();
-  var scored = library.map(function(item) {
-    var s = stats[item.id], priority = 0;
-    if (!s || s.shown === 0) priority = 100;
-    else {
-      var rate = s.success / s.shown;
-      if (rate < 0.3) priority = 90;
-      else if (rate < 0.5) priority = 75;
-      else if (rate < 0.7) priority = 55;
-      else if (rate < 0.85) priority = 35;
-      else priority = 15;
-      if (s.lastSeen) {
-        var lastMs = s.lastSeen.toMillis ? s.lastSeen.toMillis() : (s.lastSeen.seconds * 1000);
-        var days = (now - lastMs) / (1000 * 60 * 60 * 24);
-        if (days > 30) priority += 40;
-        else if (days > 14) priority += 25;
-        else if (days > 7) priority += 15;
-        else if (days > 3) priority += 8;
-      }
-    }
-    return Object.assign({}, item, { priority: priority });
-  });
-  scored.sort(function(a, b) { return b.priority - a.priority; });
-  return shuffle(scored.slice(0, Math.min(count, library.length)));
-}
-
 async function loadPlayerStats(player){try{updateLoadingSub('讀取進度（'+charNames[player]+'）...');var snap=await withTimeout(getDocs(collection(db,'players',player,'wordStats')),10000,'wS');wordStatsMap={};snap.forEach(function(d){wordStatsMap[d.data().word]=d.data();});return wordStatsMap;}catch(e){console.warn(e.message);return wordStatsMap;}}
 async function loadPhraseStats(player){try{updateLoadingSub('讀取詞語進度...');var snap=await withTimeout(getDocs(collection(db,'players',player,'phraseStats')),10000,'pS');phraseStatsMap={};snap.forEach(function(d){phraseStatsMap[d.data().word]=d.data();});return phraseStatsMap;}catch(e){console.warn(e.message);return phraseStatsMap;}}
 async function loadSentenceStats(player){try{updateLoadingSub('讀取句子進度...');var snap=await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'sS');sentenceStatsMap={};snap.forEach(function(d){sentenceStatsMap[d.id]=d.data();});return sentenceStatsMap;}catch(e){console.warn(e.message);return sentenceStatsMap;}}
@@ -1669,11 +1471,13 @@ async function getPlayerSummary(player){
     var pSh=0,pSu=0,pK=0;pSnap.forEach(function(d){var s=d.data();pSh+=s.shown||0;pSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)pK++;});
     var sSnap=await withTimeout(getDocs(collection(db,'players',player,'sentenceStats')),10000,'ss');
     var sSh=0,sSu=0,sK=0;sSnap.forEach(function(d){var s=d.data();sSh+=s.shown||0;sSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)sK++;});
+    var aSnap=await withTimeout(getDocs(collection(db,'players',player,'articleStats')),10000,'sa');
+    var aSh=0,aSu=0,aK=0;aSnap.forEach(function(d){var s=d.data();aSh+=s.shown||0;aSu+=s.success||0;if(s.shown>0&&s.success/s.shown>=0.8)aK++;});
     var mSnap=await withTimeout(getDocs(collection(db,'players',player,'mathChapterStats')),10000,'sm');
     var mShown=0,mFirst=0,mCorrect=0;mSnap.forEach(function(d){var s=d.data();mShown+=s.shown||0;mFirst+=s.firstCorrect||0;mCorrect+=(s.firstCorrect||0)+(s.secondCorrect||0);});
     var seSnap=await withTimeout(getDocs(collection(db,'players',player,'sessions')),10000,'se');
-    return{wordKnown:wK,wordRate:wSh>0?Math.round(wSu/wSh*100):0,phraseKnown:pK,phraseRate:pSh>0?Math.round(pSu/pSh*100):0,sentenceKnown:sK,sentenceRate:sSh>0?Math.round(sSu/sSh*100):0,mathFirstRate:mShown>0?Math.round(mFirst/mShown*100):0,mathRate:mShown>0?Math.round(mCorrect/mShown*100):0,sessions:seSnap.size};
-  }catch(e){console.warn(e.message);return{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0};}
+    return{wordKnown:wK,wordRate:wSh>0?Math.round(wSu/wSh*100):0,phraseKnown:pK,phraseRate:pSh>0?Math.round(pSu/pSh*100):0,sentenceKnown:sK,sentenceRate:sSh>0?Math.round(sSu/sSh*100):0,articleKnown:aK,articleRate:aSh>0?Math.round(aSu/aSh*100):0,mathFirstRate:mShown>0?Math.round(mFirst/mShown*100):0,mathRate:mShown>0?Math.round(mCorrect/mShown*100):0,sessions:seSnap.size};
+  }catch(e){console.warn(e.message);return{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,articleKnown:0,articleRate:0,mathFirstRate:0,mathRate:0,sessions:0};}
 }
 
 // ============================================================
@@ -1791,8 +1595,7 @@ async function init(){
       loadParentPin(),
       loadWordLibrary(),
       loadPhraseLibrary(),
-      loadSentenceLibrary(),
-      loadArticleLibrary()
+      loadSentenceLibrary()
     ]);
     PARENT_PIN = results[0] || '1234';   // 重要：一定要賦值給全域變數
     hideLoading();
@@ -1817,9 +1620,7 @@ window.selectPlayer=async function(player){
   currentPlayer=player;showLoading('準備冒險裝備...','');startLoadingTimer();
   try{
     wordStatsMap=await loadPlayerStats(player);phraseStatsMap=await loadPhraseStats(player);sentenceStatsMap=await loadSentenceStats(player);
-    articleStatsMap=await loadArticleStats(player);
     await loadTasksForPlayer(player);await loadMathSettings(player);await loadMathWrongPool(player);
-    await loadArticleSettings(player);
     var summary=await getPlayerSummary(player);
     hideLoading();renderHub(player,summary);
   }catch(e){console.error(e);hideLoading();renderHub(player,{wordKnown:0,wordRate:0,phraseKnown:0,phraseRate:0,sentenceKnown:0,sentenceRate:0,mathFirstRate:0,mathRate:0,sessions:0});}
@@ -1845,13 +1646,13 @@ function renderHub(player,summary){
     });
     document.getElementById('hub-tasks-list').innerHTML=html;
   }else{tasksSection.style.display='none';}
-  var allEmpty=fullWordLibrary.length===0&&fullPhraseLibrary.length===0&&fullSentenceLibrary.length===0&&fullArticleLibrary.length===0;
+  var allEmpty=fullWordLibrary.length===0&&fullPhraseLibrary.length===0&&fullSentenceLibrary.length===0;
   document.getElementById('hub-empty-notice').style.display=allEmpty?'block':'none';
   var cardsHtml='';
   GAME_CATALOG.forEach(function(game){
     var isTask=todayTasks.includes(game.id),isDone=(doneTasks[player]||[]).includes(game.id);
     if(game.available){
-      var ec=game.id==='phrase'?'phrase-card':game.id==='sentence'?'sentence-card':game.id==='article'?'article-card':game.id==='math'?'math-card':'';
+      var ec=game.id==='phrase'?'phrase-card':game.id==='sentence'?'sentence-card':game.id==='math'?'math-card':'';
       cardsHtml+='<div class="game-card available '+ec+(isTask?' has-task':'')+'" onclick="startGameFromHub(\''+game.id+'\')">'+(isTask?'<div class="game-task-indicator">'+(isDone?'✅':'📌')+'</div>':'')+'<div class="game-icon">'+game.icon+'</div><div class="game-name">'+game.name+'</div><div class="game-desc">'+game.desc+'</div><div class="game-btn">▶ 開始</div></div>';
     }else{
       cardsHtml+='<div class="game-card locked"><div class="game-icon">'+game.icon+'</div><div class="game-name">'+game.name+'</div><div class="game-desc">'+game.desc+'</div><div class="lock-icon">🔒</div></div>';
@@ -1866,12 +1667,6 @@ window.startGameFromHub=function(gameId){
   if(gameId==='chinese'){if(fullWordLibrary.length===0){alert('單字庫還是空的！');return;}allWords=selectSmartWords(fullWordLibrary,wordStatsMap,100);startCardGame();}
   else if(gameId==='phrase'){if(fullPhraseLibrary.length===0){alert('詞語庫還是空的！');return;}allWords=selectSmartWords(fullPhraseLibrary,phraseStatsMap,100);startCardGame();}
   else if(gameId==='sentence'){if(fullSentenceLibrary.length===0){alert('句子庫還是空的！');return;}currentSentences=selectSmartSentences(fullSentenceLibrary,sentenceStatsMap,15);startSentenceGame();}
-  else if(gameId==='article'){
-    if(fullArticleLibrary.length===0){alert('文章庫還是空的！請家長先新增文章。');return;}
-    var count=(articleSettings[currentPlayer]&&articleSettings[currentPlayer].count)||ARTICLE_DEFAULT_COUNT;
-    currentArticles=selectSmartArticles(fullArticleLibrary,articleStatsMap,count);
-    startArticleGame();
-  }
   else if(gameId==='math'){startMathGame();}
 };
 
@@ -1882,7 +1677,7 @@ function startCardGame(){
   knownWords=[];undoStack=[];collectedItems=[];currentSceneIndex=0;lastMilestone=-1;sessionStartTime=Date.now();
   document.getElementById('route-map').style.display='flex';document.getElementById('sentence-route-map').style.display='none';
   document.getElementById('badge-legend').style.display='flex';document.getElementById('progress-row').style.display='flex';
-  document.getElementById('cards-area').style.display='flex';document.getElementById('sentence-game-area').style.display='none';document.getElementById('article-game-area').style.display='none';
+  document.getElementById('cards-area').style.display='flex';document.getElementById('sentence-game-area').style.display='none';
   document.getElementById('btn-undo').style.display='none';
   document.getElementById('badge-emoji').textContent=charEmoji[currentPlayer];document.getElementById('badge-name').textContent=charNames[currentPlayer];document.getElementById('char-sprite').textContent=charEmoji[currentPlayer];
   var typeBadge=document.getElementById('game-type-badge');
@@ -1937,7 +1732,7 @@ function startSentenceGame(){
   currentSentIdx=0;sentenceResults=[];isSpeaking=false;collectedItems=[];sessionStartTime=Date.now();
   document.getElementById('route-map').style.display='none';document.getElementById('sentence-route-map').style.display='flex';
   document.getElementById('badge-legend').style.display='none';document.getElementById('progress-row').style.display='none';
-  document.getElementById('cards-area').style.display='none';document.getElementById('sentence-game-area').style.display='flex';document.getElementById('article-game-area').style.display='none';document.getElementById('btn-undo').style.display='none';
+  document.getElementById('cards-area').style.display='none';document.getElementById('sentence-game-area').style.display='flex';document.getElementById('btn-undo').style.display='none';
   document.getElementById('badge-emoji').textContent=charEmoji[currentPlayer];document.getElementById('badge-name').textContent=charNames[currentPlayer];document.getElementById('char-sprite').textContent=charEmoji[currentPlayer];
   var typeBadge=document.getElementById('game-type-badge');typeBadge.textContent='📖 認句';typeBadge.className='game-type-badge sentence';
   setSentenceButtonsDisabled(false);document.getElementById('sentence-reading-indicator').style.display='none';
@@ -1968,93 +1763,6 @@ window.answerSentence=function(known){
   speakText(sentObj.sentence,0.7,function(){isSpeaking=false;document.getElementById('sentence-reading-indicator').style.display='none';setTimeout(function(){showSentence(currentSentIdx+1);},400);});
 };
 function showAllSentenceDoneCelebration(){playCelebrationSound();createConfetti();setDialogue('你認識全部句子！太厲害！');var overlay=document.createElement('div');overlay.className='celebration';overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉📖🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">句子大師 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:20px;">所有句子都認識！📖✨</p><button class="btn btn-again" onclick="this.closest(\'.celebration\').remove();finishSentenceGame();">📒 查看冒險日記</button></div>';document.body.appendChild(overlay);}
-
-// ============================================================
-// 12b. 文章冒險
-// ============================================================
-function startArticleGame(){
-  currentArticleIdx=0;articleResults=[];isSpeaking=false;collectedItems=[];sessionStartTime=Date.now();
-  document.getElementById('route-map').style.display='none';
-  document.getElementById('sentence-route-map').style.display='none';
-  document.getElementById('badge-legend').style.display='none';
-  document.getElementById('progress-row').style.display='none';
-  document.getElementById('cards-area').style.display='none';
-  document.getElementById('sentence-game-area').style.display='none';
-  document.getElementById('article-game-area').style.display='flex';
-  document.getElementById('btn-undo').style.display='none';
-  document.getElementById('badge-emoji').textContent=charEmoji[currentPlayer];
-  document.getElementById('badge-name').textContent=charNames[currentPlayer];
-  document.getElementById('char-sprite').textContent=charEmoji[currentPlayer];
-  var typeBadge=document.getElementById('game-type-badge');
-  typeBadge.textContent='📰 文章';typeBadge.className='game-type-badge article';
-  setArticleButtonsDisabled(false);
-  document.getElementById('article-reading-indicator').style.display='none';
-  setDialogue('慢慢讀，讀完就告訴我你認識嗎！');
-  showArticle(0);setBodyScene('scene-school');showPage('page-game');
-}
-function setArticleButtonsDisabled(disabled){
-  document.querySelectorAll('.btn-article-known,.btn-article-unknown').forEach(function(b){b.disabled=disabled;});
-}
-function showArticle(idx){
-  if(idx>=currentArticles.length){
-    var knownCount=articleResults.filter(function(r){return r.known;}).length;
-    if(knownCount===currentArticles.length) setTimeout(showAllArticleDoneCelebration,400);
-    else setTimeout(function(){finishArticleGame();},400);
-    return;
-  }
-  currentArticleIdx=idx;
-  var art=currentArticles[idx];
-  document.getElementById('article-progress-text').textContent='第 '+(idx+1)+' / '+currentArticles.length+' 篇';
-  var g=ARTICLE_GRADES.find(function(x){return x.id===art.grade;});
-  document.getElementById('article-grade-badge').textContent=g?g.name:(art.grade||'K3');
-  document.getElementById('article-title').textContent=art.title||'無標題';
-  document.getElementById('article-content').textContent=art.content||'';
-  setArticleButtonsDisabled(false);
-  document.getElementById('article-reading-indicator').style.display='none';
-  setDialogue('第 '+(idx+1)+' 篇，慢慢讀！');
-}
-window.answerArticle=function(known){
-  if(isSpeaking)return;
-  var art=currentArticles[currentArticleIdx];
-  articleResults.push({id:art.id,title:art.title,content:art.content,grade:art.grade,known:known,roundNum:currentArticleIdx+1});
-  isSpeaking=true;setArticleButtonsDisabled(true);
-  document.getElementById('article-reading-indicator').style.display='block';
-  if(known){playHappySound();var sp=document.getElementById('char-sprite');sp.classList.remove('jump');void sp.offsetWidth;sp.classList.add('jump');setDialogue('太棒了！你認識這篇文章！');createFloatingEmoji(window.innerWidth/2,window.innerHeight/2);}
-  else setDialogue('沒關係！仔細聽一遍！');
-  addCollectible();
-  speakText((art.title||'')+'。'+(art.content||'').substring(0,120),0.75,function(){
-    isSpeaking=false;document.getElementById('article-reading-indicator').style.display='none';
-    setTimeout(function(){showArticle(currentArticleIdx+1);},400);
-  });
-};
-function showAllArticleDoneCelebration(){
-  playCelebrationSound();createConfetti();setDialogue('你認識全部文章！太厲害！');
-  var overlay=document.createElement('div');overlay.className='celebration';
-  overlay.innerHTML='<div class="celebration-content"><div style="font-size:70px;margin-bottom:10px;">🎉📰🎉</div><h2 style="font-size:28px;color:#333;margin-bottom:8px;">閱讀小達人 '+charNames[currentPlayer]+'！</h2><p style="font-size:20px;color:#666;margin-bottom:20px;">所有文章都認識！📰✨</p><button class="btn btn-again" onclick="this.closest(\'.celebration\').remove();finishArticleGame();">📒 查看冒險日記</button></div>';
-  document.body.appendChild(overlay);
-}
-window.finishArticleGame=async function(){
-  document.querySelectorAll('.celebration,.milestone-popup').forEach(function(e){e.remove();});
-  if(window.speechSynthesis)window.speechSynthesis.cancel();isSpeaking=false;
-  if(articleResults.length===0){backToHub();return;}
-  showLoading('儲存冒險記錄...','');
-  var saves=[];articleResults.forEach(function(r){saves.push(saveArticleResult(currentPlayer,r.id,r.title,r.known));});
-  await Promise.all(saves);
-  var knownResults=articleResults.filter(function(r){return r.known;});
-  var unknownResults=articleResults.filter(function(r){return !r.known;});
-  await saveSession(currentPlayer,articleResults.length,knownResults.length,unknownResults,'article');
-  var todayTasks=getTodayTasks(currentPlayer);
-  if(todayTasks.includes('article'))await markTaskDone(currentPlayer,'article');
-  var summary=await getPlayerSummary(currentPlayer);
-  hideLoading();window.__articleResults=articleResults;
-  renderReport(knownResults,unknownResults,summary);
-};
-window.speakArticleFromReport=function(idx){
-  if(window.__articleResults&&window.__articleResults[idx]){
-    var a=window.__articleResults[idx];
-    speakText((a.title||'')+'。'+(a.content||'').substring(0,100),0.75,null);
-  }
-};
 
 // ============================================================
 // 13. 數學遊戲
@@ -2209,6 +1917,13 @@ window.showConfirmFinish=function(){
     var overlay=document.createElement('div');overlay.className='celebration';overlay.id='confirm-overlay';
     overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的冒險？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">已完成 <b style="color:#48c774;">'+answered+'</b> 句，還有 <b style="color:#ff6b6b;">'+remaining+'</b> 句未完成</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();finishSentenceGame();">✅ 結束冒險</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();">↩️ 繼續冒險</button></div></div>';
     document.body.appendChild(overlay);
+  }else if(currentGameType==='article'){
+    if(window.speechSynthesis)window.speechSynthesis.cancel();isSpeaking=false;
+    var answered=articleResults.length,total=currentArticles?currentArticles.length:3,remaining=total-answered;
+    if(remaining===0){finishArticleGame();return;}
+    var overlay=document.createElement('div');overlay.className='celebration';overlay.id='confirm-overlay';
+    overlay.innerHTML='<div class="celebration-content"><div style="font-size:50px;margin-bottom:10px;">🏁</div><h2 style="font-size:24px;color:#333;margin-bottom:10px;">結束今天的冒險？</h2><p style="font-size:16px;color:#888;margin-bottom:20px;">已完成 <b style="color:#48c774;">'+answered+'</b> 篇，還有 <b style="color:#ff6b6b;">'+remaining+'</b> 篇未完成</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-sm" style="background:linear-gradient(135deg,#48c774,#36d1dc);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();finishArticleGame();">✅ 結束冒險</button><button class="btn btn-sm" style="background:linear-gradient(135deg,#aaa,#888);color:white;" onclick="document.getElementById(\'confirm-overlay\').remove();">↩️ 繼續冒險</button></div></div>';
+    document.body.appendChild(overlay);
   }else{
     var remaining=allWords.length-knownWords.length;
     if(remaining===0){finishCardGame();return;}
@@ -2265,39 +1980,72 @@ window.speakSentenceFromReport=function(idx){if(window.__sentenceResults&&window
 // --- 顯示報告 ---
 function renderReport(knownList,unknownList,summary){
   setBodyScene('scene-report');
-  var isSentence=currentGameType==='sentence',isPhrase=currentGameType==='phrase';
+  var isSentence=currentGameType==='sentence',isPhrase=currentGameType==='phrase',isArticle=currentGameType==='article';
   var total=knownList.length+unknownList.length;
   var pct=total>0?Math.round(knownList.length/total*100):0;
-  document.getElementById('report-name').textContent=charNames[currentPlayer]+'的'+(isSentence?'認句':isPhrase?'認詞':'認字')+'冒險';
-  document.getElementById('report-subtitle').textContent=isSentence?'📖 認句冒險紀錄':isPhrase?'🔤 詞語冒險紀錄':'🏙️ 認字冒險紀錄';
+  document.getElementById('report-name').textContent=charNames[currentPlayer]+'的'+(isArticle?'文章':isSentence?'認句':isPhrase?'認詞':'認字')+'冒險';
+  document.getElementById('report-subtitle').textContent=isArticle?'📰 文章冒險紀錄':isSentence?'📖 認句冒險紀錄':isPhrase?'🔤 詞語冒險紀錄':'🏙️ 認字冒險紀錄';
   document.getElementById('stat-total').textContent=total;document.getElementById('stat-known').textContent=knownList.length;document.getElementById('stat-unknown').textContent=unknownList.length;
-  document.getElementById('stat-total-label').textContent=isSentence?'📢 今日句子':isPhrase?'📢 今日詞語':'📢 今日字卡';
-  document.getElementById('stat-known-label').textContent=isSentence?'✅ 認識的句子':'✅ 找回的字';
-  document.getElementById('stat-unknown-label').textContent=isSentence?'🔍 未認識':'🔍 未找到';
+  document.getElementById('stat-total-label').textContent=isArticle?'📢 今日文章':isSentence?'📢 今日句子':isPhrase?'📢 今日詞語':'📢 今日字卡';
+  document.getElementById('stat-known-label').textContent=(isArticle||isSentence)?'✅ 認識的'+(isArticle?'文章':'句子'):'✅ 找回的字';
+  document.getElementById('stat-unknown-label').textContent=(isArticle||isSentence)?'🔍 未認識':'🔍 未找到';
   var scoreBar=document.getElementById('score-bar-fill');scoreBar.style.width='0%';scoreBar.textContent='';
   scoreBar.style.background=pct>=80?'linear-gradient(90deg,#48c774,#36d1dc)':pct>=50?'linear-gradient(90deg,#ffa500,#fdcb6e)':'linear-gradient(90deg,#ff6b6b,#ffa500)';
   setTimeout(function(){scoreBar.style.width=pct+'%';scoreBar.textContent=pct+'%';},100);
-  if(isSentence){
-    var sentReached=total>=10?2:total>=5?1:0;var rHtml='';
-    ['🏠','🏫','🏰'].forEach(function(icon,s){rHtml+='<div class="rr-stop '+(s<sentReached?'done':s===sentReached?'current':'')+'">'+ icon+'</div>';if(s<2)rHtml+='<div class="rr-line '+(s<sentReached?'done':'')+'"></div>';});
+  if(isSentence||isArticle){
+    var sentReached=total>=(isArticle?2:10)?2:total>=(isArticle?1:5)?1:0;var rHtml='';
+    ['🏠','🏫','🏰'].forEach(function(icon,s){rHtml+='<div class="rr-stop '+(s<sentReached?'done':s===sentReached?'current':'')+'">'+icon+'</div>';if(s<2)rHtml+='<div class="rr-line '+(s<sentReached?'done':'')+'"></div>';});
     document.getElementById('report-route').innerHTML=rHtml;
   }else{
     var reached=getCardSceneIndex();var rHtml='';
-    ['🏠','🌳','🏪','🏫','🎡','🏰'].forEach(function(icon,s){rHtml+='<div class="rr-stop '+(s<reached?'done':s===reached?'current':'')+'">'+ icon+'</div>';if(s<5)rHtml+='<div class="rr-line '+(s<reached?'done':'')+'"></div>';});
+    ['🏠','🌳','🏪','🏫','🎡','🏰'].forEach(function(icon,s){rHtml+='<div class="rr-stop '+(s<reached?'done':s===reached?'current':'')+'">'+icon+'</div>';if(s<5)rHtml+='<div class="rr-line '+(s<reached?'done':'')+'"></div>';});
     document.getElementById('report-route').innerHTML=rHtml;
   }
   var msgs=['🌷 好的開始！下次會更好！','💪 加油！繼續練習！','💪 好棒！已經學會一半了！','🌟 超級厲害！幾乎全部都會！','🏆 全部認識！太厲害了！'];
   document.getElementById('report-message').innerHTML=pct>=100?msgs[4]:pct>=80?msgs[3]:pct>=50?msgs[2]:pct>=25?msgs[1]:msgs[0];
   document.getElementById('cum-player-name').textContent=charNames[currentPlayer];
-  if(isSentence){document.getElementById('cum-lib-label').textContent='📖 句子庫總句子數';document.getElementById('cum-known-label').textContent='✅ 累計認識的句子';document.getElementById('cum-total').textContent=fullSentenceLibrary.length+' 個句子';document.getElementById('cum-known').textContent=summary.sentenceKnown+' 個句子';document.getElementById('cum-today').textContent='+'+knownList.length+' 個句子';}
-  else if(isPhrase){document.getElementById('cum-lib-label').textContent='🔤 詞語庫總詞語數';document.getElementById('cum-known-label').textContent='✅ 累計認識的詞語';document.getElementById('cum-total').textContent=fullPhraseLibrary.length+' 個詞語';document.getElementById('cum-known').textContent=summary.phraseKnown+' 個詞語';document.getElementById('cum-today').textContent='+'+knownList.length+' 個詞語';}
-  else{document.getElementById('cum-lib-label').textContent='📚 字庫總字數';document.getElementById('cum-known-label').textContent='✅ 累計認識的字';document.getElementById('cum-total').textContent=fullWordLibrary.length+' 個字';document.getElementById('cum-known').textContent=summary.wordKnown+' 個字';document.getElementById('cum-today').textContent='+'+knownList.length+' 個字';}
+  if(isArticle){
+    document.getElementById('cum-lib-label').textContent='📰 文章庫總文章數';
+    document.getElementById('cum-known-label').textContent='✅ 累計認識的文章';
+    document.getElementById('cum-total').textContent=fullArticleLibrary.length+' 篇文章';
+    document.getElementById('cum-known').textContent=(summary.articleKnown||0)+' 篇文章';
+    document.getElementById('cum-today').textContent='+'+knownList.length+' 篇文章';
+  }else if(isSentence){
+    document.getElementById('cum-lib-label').textContent='📖 句子庫總句子數';
+    document.getElementById('cum-known-label').textContent='✅ 累計認識的句子';
+    document.getElementById('cum-total').textContent=fullSentenceLibrary.length+' 個句子';
+    document.getElementById('cum-known').textContent=summary.sentenceKnown+' 個句子';
+    document.getElementById('cum-today').textContent='+'+knownList.length+' 個句子';
+  }else if(isPhrase){
+    document.getElementById('cum-lib-label').textContent='🔤 詞語庫總詞語數';
+    document.getElementById('cum-known-label').textContent='✅ 累計認識的詞語';
+    document.getElementById('cum-total').textContent=fullPhraseLibrary.length+' 個詞語';
+    document.getElementById('cum-known').textContent=summary.phraseKnown+' 個詞語';
+    document.getElementById('cum-today').textContent='+'+knownList.length+' 個詞語';
+  }else{
+    document.getElementById('cum-lib-label').textContent='📚 字庫總字數';
+    document.getElementById('cum-known-label').textContent='✅ 累計認識的字';
+    document.getElementById('cum-total').textContent=fullWordLibrary.length+' 個字';
+    document.getElementById('cum-known').textContent=summary.wordKnown+' 個字';
+    document.getElementById('cum-today').textContent='+'+knownList.length+' 個字';
+  }
   document.getElementById('cum-sessions').textContent=summary.sessions+' 次';
   document.getElementById('collected-items-display').innerHTML=collectedItems.length>0?collectedItems.join(''):'<span style="color:#ccc">還沒有收集到寶物</span>';
-  document.getElementById('report-known-title').textContent=isSentence?'認識的句子':isPhrase?'認識的詞語':'成功找回的文字';
-  document.getElementById('report-unknown-title').textContent=isSentence?'還未認識的句子':isPhrase?'還未認識的詞語':'還藏在城市裡的文字';
+  document.getElementById('report-known-title').textContent=isArticle?'認識的文章':isSentence?'認識的句子':isPhrase?'認識的詞語':'成功找回的文字';
+  document.getElementById('report-unknown-title').textContent=isArticle?'還未認識的文章':isSentence?'還未認識的句子':isPhrase?'還未認識的詞語':'還藏在城市裡的文字';
   var knownHtml='',unknownHtml='';
-  if(isSentence){
+  if(isArticle){
+    if(knownList.length===0){knownHtml='<p class="empty-message">（還沒有認識的文章）</p>';}
+    else knownList.forEach(function(r){
+      var preview=(r.title||'').substring(0,8)+((r.title||'').length>8?'...':'');
+      knownHtml+='<span class="report-word known sentence-word" onclick="speakArticleFromReport('+(r.roundNum-1)+')" title="'+(r.title||'')+'"><span class="sentence-report-num">第'+r.roundNum+'篇</span><span class="sentence-report-text">'+preview+'</span><span class="sound-icon">🔊</span></span>';
+    });
+    if(unknownList.length===0){unknownHtml='<p class="empty-message">（全部都認識了！🎉）</p>';}
+    else unknownList.forEach(function(r){
+      var preview=(r.title||'').substring(0,8)+((r.title||'').length>8?'...':'');
+      unknownHtml+='<span class="report-word unknown sentence-word" onclick="speakArticleFromReport('+(r.roundNum-1)+')" title="'+(r.title||'')+'"><span class="sentence-report-num">第'+r.roundNum+'篇</span><span class="sentence-report-text">'+preview+'</span><span class="sound-icon">🔊</span></span>';
+    });
+  }else if(isSentence){
     if(knownList.length===0){knownHtml='<p class="empty-message">（還沒有認識的句子）</p>';}
     else knownList.forEach(function(r){var preview=r.sentence.substring(0,5)+(r.sentence.length>5?'...':'');knownHtml+='<span class="report-word known sentence-word" onclick="speakSentenceFromReport('+(r.roundNum-1)+')" title="'+r.sentence+'"><span class="sentence-report-num">第'+r.roundNum+'句</span><span class="sentence-report-text">'+preview+'</span><span class="sound-icon">🔊</span></span>';});
     if(unknownList.length===0){unknownHtml='<p class="empty-message">（全部都認識了！🎉）</p>';}
@@ -2381,23 +2129,19 @@ window.checkPin=function(){
 async function openParentDashboard(){
   showLoading('載入管理後台...','');startLoadingTimer();
   try{
-    await loadWordLibrary();await loadPhraseLibrary();await loadSentenceLibrary();await loadArticleLibrary();
+    await loadWordLibrary();await loadPhraseLibrary();await loadSentenceLibrary();
     await loadTasksForPlayer('hayden');await loadTasksForPlayer('celine');
     await loadMathSettings('hayden');await loadMathSettings('celine');
     await loadMathWrongPool('hayden');await loadMathWrongPool('celine');
-    await loadArticleSettings('hayden');await loadArticleSettings('celine');
     await loadParentStats();
     hideLoading();setBodyScene('scene-parent');showPage('page-parent');
-    renderWordChips();renderPhraseChips();renderSentenceList();renderArticleList();
-    var hEl=document.getElementById('article-count-hayden'),cEl=document.getElementById('article-count-celine');
-    if(hEl)hEl.value=(articleSettings.hayden&&articleSettings.hayden.count)||3;
-    if(cEl)cEl.value=(articleSettings.celine&&articleSettings.celine.count)||3;
+    renderWordChips();renderPhraseChips();renderSentenceList();
     planPlayer='hayden';renderPlanUI();renderCompletionStatus();
     mathSettingsPlayer='hayden';renderMathSettingsUI();
     mathWrongPlayer='hayden';mathWrongTab='wrong';renderMathWrongList();
   }catch(e){
     console.error(e);hideLoading();setBodyScene('scene-parent');showPage('page-parent');
-    renderWordChips();renderPhraseChips();renderSentenceList();renderArticleList();
+    renderWordChips();renderPhraseChips();renderSentenceList();
     planPlayer='hayden';renderPlanUI();renderCompletionStatus();
     mathSettingsPlayer='hayden';renderMathSettingsUI();
     mathWrongPlayer='hayden';mathWrongTab='wrong';renderMathWrongList();
@@ -2414,9 +2158,8 @@ window.switchTab=function(tabId,btn){
 };
 window.switchLibTab=function(tabId,btn,activeClass){
   document.querySelectorAll('.lib-tab-content').forEach(function(t){t.classList.remove('active');});
-  document.querySelectorAll('.lib-tab-btn').forEach(function(b){b.classList.remove('active','word-lib','phrase-lib','sentence-lib','article-lib');});
+  document.querySelectorAll('.lib-tab-btn').forEach(function(b){b.classList.remove('active','word-lib','phrase-lib','sentence-lib');});
   document.getElementById(tabId).classList.add('active');if(btn){btn.classList.add('active',activeClass);}
-  if(tabId==='lib-article') renderArticleList();
 };
 
 // --- 任務計劃 ---
@@ -2527,64 +2270,6 @@ window.addSentencesToLibrary=async function(){
   showLoading('新增句子中...','');var added=0;
   for(var i=0;i<sentences.length;i++){if(await addSentenceToLibrary(sentences[i]))added++;}
   localStorage.removeItem(SENTENCE_CACHE_KEY);await loadSentenceLibrary();hideLoading();document.getElementById('newSentencesInput').value='';renderSentenceList();alert('成功新增 '+added+' 個句子，'+(sentences.length-added)+' 個句子已存在');
-};
-
-// --- 文章庫管理 UI ---
-function renderArticleList(){
-  var container=document.getElementById('article-list-display');
-  var totalEl=document.getElementById('total-article-count');
-  if(totalEl) totalEl.textContent=fullArticleLibrary.length;
-  var tabsHtml='';
-  ARTICLE_GRADES.forEach(function(g){
-    var count=fullArticleLibrary.filter(function(a){return a.grade===g.id;}).length;
-    tabsHtml+='<button class="article-grade-tab'+(currentArticleGradeTab===g.id?' active':'')+'" onclick="switchArticleGradeTab(\''+g.id+'\')">'+g.name+' ('+count+')</button>';
-  });
-  var tabsEl=document.getElementById('article-grade-tabs');
-  if(tabsEl) tabsEl.innerHTML=tabsHtml;
-  if(!container) return;
-  var filtered=fullArticleLibrary.filter(function(a){return a.grade===currentArticleGradeTab;});
-  if(filtered.length===0){container.innerHTML='<p style="color:#bbb;font-size:14px;padding:10px;">此年級暫無文章，請新增</p>';return;}
-  var html='';
-  filtered.forEach(function(item){
-    var preview=(item.content||'').substring(0,40)+((item.content||'').length>40?'...':'');
-    html+='<div class="article-lib-item"><div style="flex:1;"><div class="article-lib-title">'+(item.title||'無標題')+'</div><div class="article-lib-meta">'+preview+'</div></div><button class="article-lib-delete" onclick="removeArticle(\''+item.id+'\')">✕</button></div>';
-  });
-  container.innerHTML=html;
-}
-window.switchArticleGradeTab=function(gradeId){currentArticleGradeTab=gradeId;renderArticleList();};
-window.removeArticle=async function(docId){
-  if(!confirm('確定要刪除這篇文章嗎？'))return;
-  await deleteArticleFromLibrary(docId);
-  localStorage.removeItem(ARTICLE_CACHE_KEY);
-  await loadArticleLibrary();renderArticleList();
-};
-window.addArticleToLibrary=async function(){
-  var title=document.getElementById('newArticleTitle').value.trim();
-  var content=document.getElementById('newArticleContent').value.trim();
-  var grade=document.getElementById('newArticleGrade').value;
-  if(!title){alert('請輸入文章標題！');return;}
-  if(!content){alert('請輸入文章內容！');return;}
-  showLoading('新增文章中...','');
-  var ok=await addArticleToLibrary(title,content,grade);
-  localStorage.removeItem(ARTICLE_CACHE_KEY);
-  await loadArticleLibrary();hideLoading();
-  if(ok){
-    document.getElementById('newArticleTitle').value='';
-    document.getElementById('newArticleContent').value='';
-    currentArticleGradeTab=grade;renderArticleList();
-    alert('成功新增文章「'+title+'」！');
-  }else alert('新增失敗，可能已存在相同標題的文章。');
-};
-window.saveArticleSettings=async function(){
-  var hCount=parseInt(document.getElementById('article-count-hayden').value)||3;
-  var cCount=parseInt(document.getElementById('article-count-celine').value)||3;
-  hCount=Math.max(1,Math.min(10,hCount));cCount=Math.max(1,Math.min(10,cCount));
-  showLoading('儲存文章設定...','');
-  await saveArticleSettingsForPlayer('hayden',hCount);
-  await saveArticleSettingsForPlayer('celine',cCount);
-  hideLoading();
-  var s=document.getElementById('article-settings-status');
-  if(s){s.textContent='✅ 文章篇數設定已儲存！（Hayden: '+hCount+'篇 / Celine: '+cCount+'篇）';setTimeout(function(){s.textContent='';},3000);}
 };
 
 // --- 數學設定 UI ---
